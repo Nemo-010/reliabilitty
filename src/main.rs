@@ -6,6 +6,7 @@ mod config;
 mod input;
 mod pty;
 mod render;
+mod scale;
 mod scrollbar;
 mod signals;
 mod theme;

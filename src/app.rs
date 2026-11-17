@@ -4,11 +4,14 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, Instant, SystemTime};
 
+use x11rb::connection::Connection as _;
+
 use crate::cli::Cli;
 use crate::config::{Config, Padding};
 use crate::input::{Action, Bindings, Composer, Mods, encode_key};
 use crate::pty::Pty;
 use crate::render::{Canvas, Renderer, pixel};
+use crate::scale;
 use crate::scrollbar;
 use crate::signals::Signals;
 use crate::theme::Theme;
@@ -104,8 +107,11 @@ pub fn run(cli: Cli) -> Result<(), String> {
     let theme = Theme::from_config(&config.colors)?;
     let dpi = if config.font.dpi > 0.0 {
         config.font.dpi
+    } else if let Ok((connection, screen)) = x11rb::connect(None) {
+        let root = connection.setup().roots[screen].root;
+        scale::detect(&connection, root)
     } else {
-        96.0
+        scale::BASE_DPI
     };
     // Show the window with its background before scanning fonts, which is
     // the slowest part of startup. Cell metrics are corrected once fonts load.
