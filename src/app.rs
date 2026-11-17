@@ -12,8 +12,32 @@ use crate::render::{Canvas, Renderer, pixel};
 use crate::scrollbar;
 use crate::signals::Signals;
 use crate::theme::Theme;
-use crate::vt::{CursorStyle, Parser, SelectionMode, Terminal};
+use crate::vt::{CursorStyle, Damage, Parser, SelectionMode, Terminal};
 use crate::x11::{UiEvent, X11};
+
+fn window_pixels(config: &Config, cell_width: u16, cell_height: u16) -> (u16, u16) {
+    let columns = if config.window.dimensions.columns == 0 {
+        80
+    } else {
+        config.window.dimensions.columns
+    };
+    let lines = if config.window.dimensions.lines == 0 {
+        24
+    } else {
+        config.window.dimensions.lines
+    };
+    let padding = config.window.padding;
+    (
+        columns
+            .saturating_mul(cell_width)
+            .saturating_add(padding.x.saturating_mul(2))
+            .max(1),
+        lines
+            .saturating_mul(cell_height)
+            .saturating_add(padding.y.saturating_mul(2))
+            .max(1),
+    )
+}
 
 struct Drag {
     last_x: i16,
@@ -83,10 +107,17 @@ pub fn run(cli: Cli) -> Result<(), String> {
     } else {
         96.0
     };
-    let mut renderer = Renderer::new(&config.font, dpi, None)?;
-    renderer.set_cursor_options(config.cursor.thickness, config.cursor.unfocused_hollow);
-    let cell_width = renderer.cell_width();
-    let cell_height = renderer.cell_height();
+    // Show the window with its background before scanning fonts, which is
+    // the slowest part of startup. Cell metrics are corrected once fonts load.
+    let size_px = (config.font.size * dpi / 72.0).max(1.0);
+    let mut cell_width = config
+        .font
+        .cell_width
+        .unwrap_or_else(|| (size_px * 0.6).floor().max(1.0) as u16);
+    let mut cell_height = config
+        .font
+        .cell_height
+        .unwrap_or_else(|| size_px.round().max(1.0) as u16);
     let columns = if config.window.dimensions.columns == 0 {
         80
     } else {
@@ -109,7 +140,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
         .class
         .clone()
         .unwrap_or_else(|| config.window.class.clone());
-    let x11 = X11::new(
+    let mut x11 = X11::new(
         &config.window,
         &title,
         &instance,
@@ -122,6 +153,32 @@ pub fn run(cli: Cli) -> Result<(), String> {
     let mut canvas = Canvas::new(x11.width(), x11.height());
     canvas.argb = x11.is_argb();
     canvas.fill(pixel(&canvas, theme.background, x11.background_alpha()));
+    let full = Damage {
+        all: true,
+        rows: Vec::new(),
+    };
+    x11.present(&canvas, &full, cell_height, 0);
+
+    let mut renderer = Renderer::new(&config.font, dpi, None)?;
+    renderer.set_cursor_options(config.cursor.thickness, config.cursor.unfocused_hollow);
+    cell_width = renderer.cell_width();
+    cell_height = renderer.cell_height();
+    {
+        let (width, height) = window_pixels(&config, cell_width, cell_height);
+        if (x11.width(), x11.height()) != (width, height) {
+            x11.resize_window(width, height)?;
+            x11.set_size(width, height);
+            canvas = Canvas::new(width, height);
+            canvas.argb = x11.is_argb();
+            canvas.fill(pixel(&canvas, theme.background, x11.background_alpha()));
+        }
+    }
+    x11.set_size_hints(
+        config.window.padding,
+        cell_width,
+        cell_height,
+        scrollbar::width(cell_width),
+    )?;
 
     let cursor_style = parse_cursor_style(&config.cursor.style);
     let mut terminal = Terminal::new(
