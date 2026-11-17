@@ -51,19 +51,19 @@ It is meant to be a terminal emulator that you can count on to always launch!
 
 ## Feature comparison
 
-| Feature | Reliabilitty | st | Alacritty |
-| --- | --- | --- | --- |
-| Config file | rtty.conf | needs patch | TOML |
-| Live reload | yes | no | yes |
-| Env overrides | yes | no | no |
-| Scrollback | yes | needs patch | yes |
-| Scrollbar | yes | needs patch | yes |
-| Truecolor | yes | needs patch | yes |
-| Transparency | yes, background | needs patch | yes, whole window incl. text |
-| Mouse reporting | yes | yes | yes |
-| OSC 52 clipboard | yes | needs patch | yes |
-| Search / Vi mode | no | no | yes |
-| Ligatures | no | no | yes |
+| Feature | Reliabilitty | st | Alacritty | Ghostty |
+| --- | --- | --- | --- | --- |
+| Config file | rtty.conf | needs patch | TOML | key=value |
+| Live reload | yes | no | yes | yes |
+| Env overrides | yes | no | no | no |
+| Scrollback | yes | needs patch | yes | yes |
+| Scrollbar | yes | needs patch | no | yes |
+| Truecolor | yes | needs patch | yes | yes |
+| Transparency | yes, background | needs patch | yes, whole window incl. text | yes, background |
+| Mouse reporting | yes | yes | yes | yes |
+| OSC 52 clipboard | yes | needs patch | yes | yes |
+| Search / Vi mode | no | no | yes | yes |
+| Ligatures | no | no | no | yes |
 
 See [PERFORMANCE.md](PERFORMANCE.md) for benchmarks.
 
