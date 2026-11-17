@@ -15,6 +15,9 @@ mod x11;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 fn main() {
     let action = match cli::parse(std::env::args().skip(1)) {
         Ok(action) => action,
