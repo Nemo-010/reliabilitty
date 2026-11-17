@@ -1,4 +1,15 @@
 
+## [0.1.3](https://github.com/pkgforge-apps/reliabilitty/compare/v0.1.2...v0.1.3) - 2026-11-17
+
+### Performance
+
+- Use mimalloc as the global allocator - ([15d2e3f](https://github.com/pkgforge-apps/reliabilitty/commit/15d2e3ffdd50e891502571da31ee9ec057aa650b))
+- Optimize scrolling and text rendering - ([ec90d7b](https://github.com/pkgforge-apps/reliabilitty/commit/ec90d7b31d72a718b87e11eb33c2bd6a5b8a5ae0))
+
+### Miscellaneous Tasks
+
+- Build musl targets with cross for mimalloc - ([b2c9c04](https://github.com/pkgforge-apps/reliabilitty/commit/b2c9c049b79c9b1f711976214860358a6c00f550))
+
 ## [0.1.2](https://github.com/pkgforge-apps/reliabilitty/compare/v0.1.1...v0.1.2) - 2026-11-17
 
 ### Features
