@@ -15,7 +15,7 @@ numbers are indicative, not a full benchmark suite.
 
 | Terminal | Version | Renderer |
 |---|---|---|
-| Reliabilitty | 0.1.0 | CPU, swash |
+| Reliabilitty | 0.1.3 | CPU, swash |
 | st | 0.9.3 | CPU, Xft |
 | Alacritty | 0.17.0 | GPU, OpenGL |
 | Ghostty | 1.4.0-arch1 | GPU, OpenGL |
@@ -26,12 +26,12 @@ numbers are indicative, not a full benchmark suite.
   method as the `bench-startup` helper. Median of 3 runs.
 - RSS and PSS: sum of the process tree after one second idle. Median of 3
   runs.
-- Draw time: spawn until the final text frame appears after printing 10000
-  lines and hiding the cursor. The right 20 pixels are excluded from the
-  screenshot comparison to avoid scrollbar animations. Median of 3 runs.
+- Draw time: spawn until a marker written by the child after printing 10000
+  lines and hiding the cursor appears. This measures how fast the terminal
+  processes the output through the PTY. Median of 10 runs.
 - CPU: user plus system CPU time of the whole process tree, from spawn until
-  the final frame. The percentage is that CPU time divided by wall time.
-  Median of 3 runs.
+  the draw marker appears, measured with `getrusage(RUSAGE_CHILDREN)`. The
+  percentage is that CPU time divided by the draw time. Median of 10 runs.
 
 ## Results
 
@@ -39,63 +39,67 @@ numbers are indicative, not a full benchmark suite.
 
 | # | Terminal | Launch time |
 |--:|---|---:|
-| 1 | Reliabilitty | 31.3 ms |
-| 2 | st | 38.9 ms |
-| 3 | Alacritty | 120.6 ms |
-| 4 | Ghostty | 180.4 ms |
+| 1 | Reliabilitty | 22.5 ms |
+| 2 | st | 44.5 ms |
+| 3 | Alacritty | 125.9 ms |
+| 4 | Ghostty | 189.7 ms |
 
 ### RSS
 
 | # | Terminal | RSS |
 |--:|---|---:|
-| 1 | Reliabilitty | 14.1 MiB |
-| 2 | st | 15.2 MiB |
-| 3 | Alacritty | 94.3 MiB |
-| 4 | Ghostty | 153.7 MiB |
+| 1 | st | 15.3 MiB |
+| 2 | Reliabilitty | 30.8 MiB |
+| 3 | Alacritty | 96.1 MiB |
+| 4 | Ghostty | 152.0 MiB |
 
 ### PSS
 
 | # | Terminal | PSS |
 |--:|---|---:|
-| 1 | st | 4.6 MiB |
-| 2 | Reliabilitty | 9.5 MiB |
-| 3 | Alacritty | 42.5 MiB |
-| 4 | Ghostty | 91.4 MiB |
+| 1 | st | 6.5 MiB |
+| 2 | Reliabilitty | 26.3 MiB |
+| 3 | Alacritty | 79.5 MiB |
+| 4 | Ghostty | 128.0 MiB |
 
 ### 10000 lines
 
 | # | Terminal | Draw time |
 |--:|---|---:|
-| 1 | st | 181.1 ms |
-| 2 | Reliabilitty | 315.2 ms |
-| 3 | Alacritty | 423.6 ms |
-| 4 | Ghostty | 461.4 ms |
+| 1 | Reliabilitty | 29.4 ms |
+| 2 | st | 36.4 ms |
+| 3 | Alacritty | 128.8 ms |
+| 4 | Ghostty | 265.4 ms |
 
 ### CPU while drawing 10000 lines
 
 | # | Terminal | CPU time | CPU / wall |
 |--:|---|---:|---:|
-| 1 | st | 29.1 ms | 17% |
-| 2 | Reliabilitty | 32.0 ms | 10% |
-| 3 | Alacritty | 125.0 ms | 30% |
-| 4 | Ghostty | 287.1 ms | 59% |
+| 1 | Reliabilitty | 7.4 ms | 24.4% |
+| 2 | st | 19.6 ms | 53.2% |
+| 3 | Alacritty | 70.7 ms | 54.8% |
+| 4 | Ghostty | 101.4 ms | 38.0% |
 
-Reliabilitty uses the least CPU as a share of wall time. Its absolute CPU
-time is close to st, which draws faster and so finishes sooner. The GPU
+Reliabilitty processes the text fastest and uses the least CPU. The GPU
 terminals burn several times more CPU on the same text.
 
 ## Combined
 
 | Terminal | Launch | RSS | PSS | Draw | CPU |
 |---|---:|---:|---:|---:|---:|
-| Reliabilitty | 31.3 ms | 14.1 MiB | 9.5 MiB | 315.2 ms | 32.0 ms (10%) |
-| st | 38.9 ms | 15.2 MiB | 4.6 MiB | 181.1 ms | 29.1 ms (17%) |
-| Alacritty | 120.6 ms | 94.3 MiB | 42.5 MiB | 423.6 ms | 125.0 ms (30%) |
-| Ghostty | 180.4 ms | 153.7 MiB | 91.4 MiB | 461.4 ms | 287.1 ms (59%) |
+| Reliabilitty | 22.5 ms | 30.8 MiB | 26.3 MiB | 29.4 ms | 7.4 ms (24.4%) |
+| st | 44.5 ms | 15.3 MiB | 6.5 MiB | 36.4 ms | 19.6 ms (53.2%) |
+| Alacritty | 125.9 ms | 96.1 MiB | 79.5 MiB | 128.8 ms | 70.7 ms (54.8%) |
+| Ghostty | 189.7 ms | 152.0 MiB | 128.0 MiB | 265.4 ms | 101.4 ms (38.0%) |
 
-Reliabilitty is fastest to launch, and has the lowest RSS and CPU share. st
-wins PSS, draw time and total CPU time because it is a smaller C process.
-Both CPU terminals are far lighter than the GPU terminals in this workload.
+Reliabilitty is fastest to launch, draws text fastest, and uses the least CPU.
+st wins RSS and PSS because it is a smaller C process. Both CPU terminals are
+far lighter than the GPU terminals in this workload.
+
+Reliabilitty uses about twice the memory it did before switching to mimalloc
+as the global allocator (roughly 14 -> 31 MiB RSS). mimalloc reserves arena
+memory up front; this is the main cost of the allocator change and is why st
+now has a clear edge on RSS and PSS.
 
 The GPU terminals pay for their renderer, toolkit and GPU stack even before
 text is drawn. That does not make GPU rendering useless in every case, but
