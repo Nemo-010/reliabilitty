@@ -56,6 +56,30 @@ impl Canvas {
         self.pixels.fill(color);
     }
 
+    /// Scrolls the whole canvas vertically by whole rows. Positive rows move
+    /// content up (a new blank area appears at the bottom). Returns the number
+    /// of pixel rows actually shifted.
+    pub fn scroll_rows(&mut self, rows: i32, cell_height: i32, background: u32) -> i32 {
+        if rows == 0 || cell_height <= 0 {
+            return 0;
+        }
+        let shift = (rows * cell_height).clamp(-(self.height as i32), self.height as i32);
+        if shift == 0 {
+            return 0;
+        }
+        let w = self.width as usize;
+        let pixels = shift.unsigned_abs() as usize * w;
+        let len = self.pixels.len();
+        if shift > 0 {
+            self.pixels.copy_within(pixels.., 0);
+            self.pixels[len - pixels..].fill(background);
+        } else {
+            self.pixels.copy_within(..len - pixels, pixels);
+            self.pixels[..pixels].fill(background);
+        }
+        shift
+    }
+
     pub fn fill_rect(&mut self, x: i32, y: i32, width: i32, height: i32, color: u32) {
         let Some((x0, y0, x1, y1)) = self.clip(x, y, width, height) else {
             return;
@@ -406,6 +430,7 @@ impl Renderer {
         let cell_w = self.cell_width as i32;
         let cell_h = self.cell_height as i32;
         let rows = terminal.height();
+        let has_selection = terminal.has_selection();
         for row in 0..rows {
             if !damage.all && !damage.rows.get(row).copied().unwrap_or(false) {
                 continue;
@@ -428,7 +453,7 @@ impl Renderer {
                 if cell.width == 0 {
                     continue;
                 }
-                let selected = terminal.is_selected(line.id, col);
+                let selected = has_selection && terminal.is_selected(line.id, col);
                 self.draw_cell(
                     canvas,
                     terminal,
@@ -483,7 +508,7 @@ impl Renderer {
                     crate::vt::CursorStyle::Block => {
                         if focused || !self.unfocused_hollow {
                             canvas.fill_rect(x, y, cell_w, cell_h, cursor_color);
-                            self.draw_text(canvas, terminal, cell, x, y, theme.cursor_text, false);
+                            self.draw_text(canvas, terminal, cell, x, y, theme.cursor_text);
                         } else {
                             outline(canvas, x, y, cell_w, cell_h, cursor_color);
                         }
@@ -561,10 +586,9 @@ impl Renderer {
         if attrs.contains(Attrs::OVERLINE) {
             canvas.fill_rect(x, y, width, stroke, foreground);
         }
-        self.draw_text(canvas, terminal, cell, x, y, fg, true);
+        self.draw_text(canvas, terminal, cell, x, y, fg);
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn draw_text(
         &mut self,
         canvas: &mut Canvas,
@@ -573,19 +597,42 @@ impl Renderer {
         x: i32,
         y: i32,
         color: Rgb,
-        _background_done: bool,
     ) {
         let style = style_index(cell.attrs);
-        let mut text = String::new();
-        text.push(cell.ch);
-        if cell.extra != 0
-            && let Some(extra) = terminal.extra_text(cell.extra)
-        {
-            text.push_str(extra);
-        }
-        if text == " " {
+        // Most cells are a single char. Avoid a per-cell String allocation by
+        // keeping the common case on the stack and only building a combined
+        // buffer for grapheme clusters with trailing combining marks.
+        let extra = if cell.extra != 0 {
+            terminal.extra_text(cell.extra)
+        } else {
+            None
+        };
+        if cell.ch == ' ' && extra.is_none() {
             return;
         }
+        let mut stack = [0u8; 8];
+        let text: &str = match extra {
+            None => cell.ch.encode_utf8(&mut stack),
+            Some(extra) => {
+                let mut combined = String::with_capacity(cell.ch.len_utf8() + extra.len());
+                combined.push(cell.ch);
+                combined.push_str(extra);
+                // Borrow from a local that outlives the loop below.
+                return self.draw_text_str(canvas, &combined, x, y, color, style);
+            }
+        };
+        self.draw_text_str(canvas, text, x, y, color, style)
+    }
+
+    fn draw_text_str(
+        &mut self,
+        canvas: &mut Canvas,
+        text: &str,
+        x: i32,
+        y: i32,
+        color: Rgb,
+        style: u8,
+    ) {
         let baseline = y as f32 + self.baseline;
         let glyph_offset_x = self.glyph_offset_x.round() as i32;
         let glyph_offset_y = self.glyph_offset_y.round() as i32;

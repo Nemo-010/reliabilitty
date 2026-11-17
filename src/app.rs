@@ -162,6 +162,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
     let full = Damage {
         all: true,
         rows: Vec::new(),
+        scroll: 0,
     };
     x11.present(&canvas, &full, cell_height, 0);
 
@@ -1008,6 +1009,19 @@ impl App {
             true
         };
         let (origin_x, origin_y) = self.origin();
+        // A whole-screen scroll only moves pixels. Shift the canvas once and
+        // let the newly exposed rows be redrawn, instead of rasterizing every
+        // cell. Presentation still needs the whole canvas since it all moved.
+        let scroll = if damage.all { 0 } else { damage.scroll };
+        if scroll != 0 {
+            let background = pixel(
+                &self.canvas,
+                self.terminal.theme().background,
+                self.x11.background_alpha(),
+            );
+            self.canvas
+                .scroll_rows(scroll, self.cell_height as i32, background);
+        }
         self.renderer.draw(
             &mut self.canvas,
             &self.terminal,
@@ -1023,8 +1037,12 @@ impl App {
                 *pixel ^= 0x00ff_ffff;
             }
         }
+        let mut present_damage = damage;
+        if scroll != 0 {
+            present_damage.all = true;
+        }
         self.x11
-            .present(&self.canvas, &damage, self.cell_height, origin_y);
+            .present(&self.canvas, &present_damage, self.cell_height, origin_y);
         self.rendered_once = true;
         if self.smoke && self.rendered_once {
             self.quit = true;

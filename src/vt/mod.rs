@@ -180,6 +180,9 @@ pub struct Selection {
 pub struct Damage {
     pub all: bool,
     pub rows: Vec<bool>,
+    /// Whole-screen rows scrolled since the last frame. Positive is up,
+    /// negative is down. Zero means no uniform shift happened.
+    pub scroll: i32,
 }
 
 impl Damage {
@@ -272,6 +275,7 @@ pub struct Terminal {
     scroll_offset: usize,
     dirty: Vec<bool>,
     dirty_all: bool,
+    pending_scroll: i32,
     line_id_next: u64,
     extras: Vec<Box<str>>,
     extras_map: HashMap<Box<str>, u32>,
@@ -344,6 +348,7 @@ impl Terminal {
             scroll_offset: 0,
             dirty: vec![false; rows],
             dirty_all: true,
+            pending_scroll: 0,
             line_id_next: 0,
             extras: Vec::new(),
             extras_map: HashMap::new(),
@@ -460,6 +465,10 @@ impl Terminal {
 
     pub fn extra_text(&self, id: u32) -> Option<&str> {
         self.extras.get(id as usize - 1).map(|text| &**text)
+    }
+
+    pub fn has_selection(&self) -> bool {
+        self.selection.is_some()
     }
 
     pub fn is_selected(&self, line: u64, col: usize) -> bool {
@@ -881,7 +890,8 @@ impl Terminal {
     pub fn take_damage(&mut self) -> Damage {
         let all = std::mem::take(&mut self.dirty_all);
         let rows = std::mem::replace(&mut self.dirty, vec![false; self.rows]);
-        Damage { all, rows }
+        let scroll = std::mem::take(&mut self.pending_scroll);
+        Damage { all, rows, scroll }
     }
 
     pub fn mark_all(&mut self) {
@@ -1219,6 +1229,11 @@ impl Terminal {
     fn scroll_region_up(&mut self, top: usize, bottom: usize, count: usize, allow_history: bool) {
         let count = count.min(bottom - top + 1);
         let full = top == 0 && bottom + 1 == self.rows;
+        // A whole-screen scroll with no active scrollback view just shifts the
+        // pixels up uniformly (also true on the alternate screen), so record
+        // it and let the renderer memmove the canvas instead of redrawing all
+        // cells. Only a scrollback view breaks the uniform shift.
+        let shift = full && self.scroll_offset == 0;
         for _ in 0..count {
             if full && allow_history && !self.in_alt() {
                 let removed = self.main.remove(top);
@@ -1240,18 +1255,34 @@ impl Terminal {
                 lines.insert(bottom, line);
             }
         }
-        self.mark_all();
+        if shift {
+            self.pending_scroll += count as i32;
+            for row in (self.rows - count)..self.rows {
+                self.mark_row(row);
+            }
+        } else {
+            self.mark_all();
+        }
     }
 
     fn scroll_region_down(&mut self, top: usize, bottom: usize, count: usize) {
         let count = count.min(bottom - top + 1);
+        let full = top == 0 && bottom + 1 == self.rows;
+        let shift = full && !self.in_alt() && self.scroll_offset == 0;
         for _ in 0..count {
             let line = self.new_line();
             let lines = self.lines_mut();
             lines.remove(bottom);
             lines.insert(top, line);
         }
-        self.mark_all();
+        if shift {
+            self.pending_scroll -= count as i32;
+            for row in 0..count {
+                self.mark_row(row);
+            }
+        } else {
+            self.mark_all();
+        }
     }
 
     fn insert_cells(&mut self, count: usize) {
