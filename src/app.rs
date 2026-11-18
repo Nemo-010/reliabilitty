@@ -86,6 +86,8 @@ struct App {
     force_reload: bool,
     bell_until: Option<Instant>,
     redraw_all: bool,
+    next_frame: Instant,
+    last_pty_input: Instant,
     smoke: bool,
     rendered_once: bool,
     quit: bool,
@@ -246,6 +248,8 @@ pub fn run(cli: Cli) -> Result<(), String> {
         force_reload: false,
         bell_until: None,
         redraw_all: true,
+        next_frame: now,
+        last_pty_input: now,
         smoke: cli.smoke,
         rendered_once: false,
         quit: false,
@@ -277,7 +281,12 @@ impl App {
             for event in events {
                 self.handle_event(event, now)?;
             }
-            self.read_pty();
+            // Drain the PTY before drawing. Rendering mid-burst blocks the
+            // child writer on the PTY buffer and wastes work on frames that
+            // are replaced before they reach the screen.
+            if self.read_pty() {
+                self.last_pty_input = now;
+            }
             self.terminal_notifications(now);
             self.flush_input();
             self.check_child(now);
@@ -285,8 +294,12 @@ impl App {
             if self.force_reload || now >= self.next_config_check {
                 self.maybe_reload(now);
             }
-            self.cursor_damage();
-            self.render(now);
+            let idle = now.duration_since(self.last_pty_input) >= Duration::from_millis(10);
+            if idle || now >= self.next_frame {
+                self.cursor_damage();
+                self.render(now);
+                self.next_frame = now + Duration::from_millis(100);
+            }
             if self.quit {
                 break;
             }
@@ -718,25 +731,28 @@ impl App {
         }
     }
 
-    fn read_pty(&mut self) {
+    fn read_pty(&mut self) -> bool {
         let mut buffer = [0u8; 65536];
+        let mut read_any = false;
         for _ in 0..64 {
             match self.pty.read(&mut buffer) {
                 Ok(0) => {
                     self.pty_eof = true;
-                    break;
+                    return read_any;
                 }
                 Ok(count) => {
+                    read_any = true;
                     self.parser.advance(&buffer[..count], &mut self.terminal);
                 }
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return read_any,
                 Err(error) => {
                     eprintln!("rtty: read: {error}");
                     self.pty_eof = true;
-                    break;
+                    return read_any;
                 }
             }
         }
+        read_any
     }
 
     fn flush_input(&mut self) {
@@ -1051,6 +1067,10 @@ impl App {
 
     fn wait(&mut self, now: Instant) -> Result<(), String> {
         let mut deadlines: Vec<Instant> = Vec::new();
+        if self.terminal.has_damage() || self.redraw_all {
+            deadlines.push(self.last_pty_input + Duration::from_millis(10));
+            deadlines.push(self.next_frame);
+        }
         if self.cursor_blinking() {
             deadlines.push(self.blink_deadline);
         }

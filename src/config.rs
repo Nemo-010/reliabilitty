@@ -121,6 +121,10 @@ fn default_fallbacks() -> Vec<String> {
         "Noto Emoji",
         "Noto Sans Symbols 2",
         "Noto Sans Symbols",
+        "Droid Sans Fallback",
+        "Nimbus Sans",
+        "Liberation Serif",
+        "Adwaita Sans",
         "DejaVu Sans",
         "FreeSerif",
     ]

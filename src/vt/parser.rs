@@ -121,8 +121,21 @@ impl Parser {
     }
 
     pub fn advance(&mut self, bytes: &[u8], terminal: &mut Terminal) {
-        for &byte in bytes {
-            self.byte(byte, terminal);
+        let mut index = 0;
+        while index < bytes.len() {
+            if matches!(self.state, State::Ground) && self.utf8.needed == 0 {
+                let start = index;
+                while index < bytes.len() && (0x20..=0x7e).contains(&bytes[index]) {
+                    index += 1;
+                }
+                if index - start >= 8 {
+                    terminal.print_ascii_run(&bytes[start..index]);
+                    continue;
+                }
+                index = start;
+            }
+            self.byte(bytes[index], terminal);
+            index += 1;
         }
     }
 

@@ -743,7 +743,7 @@ impl Renderer {
             glyph: glyph.glyph,
         };
         if !self.glyph_cache.contains_key(&key) {
-            if self.glyph_cache.len() > 8192 {
+            if self.glyph_cache.len() > 65536 {
                 self.glyph_cache.clear();
             }
             let bitmap = self.rasterize_uncached(glyph);

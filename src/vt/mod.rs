@@ -273,6 +273,7 @@ pub struct Terminal {
     clipboard_writes: Vec<ClipboardWrite>,
     clipboard_read: Option<u8>,
     scroll_offset: usize,
+    blank_lines: Vec<Line>,
     dirty: Vec<bool>,
     dirty_all: bool,
     pending_scroll: i32,
@@ -346,6 +347,7 @@ impl Terminal {
             clipboard_writes: Vec::new(),
             clipboard_read: None,
             scroll_offset: 0,
+            blank_lines: Vec::new(),
             dirty: vec![false; rows],
             dirty_all: true,
             pending_scroll: 0,
@@ -894,6 +896,10 @@ impl Terminal {
         Damage { all, rows, scroll }
     }
 
+    pub fn has_damage(&self) -> bool {
+        self.dirty_all || self.pending_scroll != 0 || self.dirty.iter().any(|dirty| *dirty)
+    }
+
     pub fn mark_all(&mut self) {
         self.dirty_all = true;
     }
@@ -929,10 +935,23 @@ impl Terminal {
     fn new_line(&mut self) -> Line {
         let id = self.line_id_next;
         self.line_id_next = self.line_id_next.wrapping_add(1);
+        let cells = if let Some(mut line) = self.blank_lines.pop() {
+            line.cells.fill(Cell::blank());
+            line.cells.resize(self.cols, Cell::blank());
+            line.cells
+        } else {
+            vec![Cell::blank(); self.cols]
+        };
         Line {
             id,
-            cells: vec![Cell::blank(); self.cols],
+            cells,
             wrapped: false,
+        }
+    }
+
+    fn recycle_line(&mut self, line: Line) {
+        if self.blank_lines.len() < 64 {
+            self.blank_lines.push(line);
         }
     }
 
@@ -1011,6 +1030,147 @@ impl Terminal {
         if self.cursor.x >= self.cols {
             self.cursor.x = self.cols - 1;
             self.wrap_pending = true;
+        }
+    }
+
+    /// Prints a run of printable ASCII without per-byte parser dispatch.
+    /// Modes that need per-character work fall back to `print`.
+    pub fn print_ascii_run(&mut self, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+        if self.insert_mode
+            || self.charsets[self.active_charset] != Charset::Ascii
+            || self.single_shift.is_some()
+        {
+            for &byte in bytes {
+                self.print(byte as char);
+            }
+            return;
+        }
+        let cols = self.cols;
+        let (fg, bg, attrs) = (self.pen.fg, self.pen.bg, self.pen.attrs);
+        let x0 = self.cursor.x.min(cols - 1);
+        let end = x0 + bytes.len();
+        let end_row = self.cursor.y + (end - 1) / cols;
+        if self.autowrap
+            && !self.wrap_pending
+            && self.scroll_top == 0
+            && end_row < self.scroll_bottom
+        {
+            let start_y = self.cursor.y;
+            let last_col = (end - 1) % cols;
+            let last = bytes[bytes.len() - 1] as char;
+            {
+                let lines = self.lines_mut();
+                let mut x = x0;
+                let mut y = start_y;
+                for &byte in bytes {
+                    let line = &mut lines[y];
+                    let old = line.cells[x];
+                    if old.width == 0 {
+                        if x > 0 && line.cells[x - 1].width == 2 {
+                            let previous = line.cells[x - 1];
+                            line.cells[x - 1] = Cell {
+                                bg: previous.bg,
+                                ..Cell::blank()
+                            };
+                        }
+                    } else if old.width == 2 && x + 1 < cols {
+                        let next = line.cells[x + 1];
+                        line.cells[x + 1] = Cell {
+                            bg: next.bg,
+                            ..Cell::blank()
+                        };
+                    }
+                    line.cells[x] = Cell {
+                        ch: byte as char,
+                        extra: 0,
+                        fg,
+                        bg,
+                        attrs,
+                        width: 1,
+                    };
+                    line.wrapped = false;
+                    x += 1;
+                    if x == cols {
+                        x = 0;
+                        y += 1;
+                    }
+                }
+            }
+            for row in start_y..=end_row {
+                self.mark_row(row);
+            }
+            self.cursor.y = end_row;
+            if end % cols == 0 {
+                self.cursor.x = cols - 1;
+                self.wrap_pending = true;
+            } else {
+                self.cursor.x = end % cols;
+            }
+            self.last_printed = Some((end_row, last_col));
+            self.last_graphic = last;
+            return;
+        }
+        let mut offset = 0;
+        while offset < bytes.len() {
+            if self.wrap_pending {
+                if self.autowrap {
+                    self.index();
+                    self.cursor.x = 0;
+                }
+                self.wrap_pending = false;
+                self.last_printed = None;
+            }
+            let y = self.cursor.y;
+            let x0 = self.cursor.x.min(cols - 1);
+            let take = (bytes.len() - offset).min(cols - x0);
+            let segment = &bytes[offset..offset + take];
+            let last = {
+                let lines = self.lines_mut();
+                let line = &mut lines[y];
+                for (index, &byte) in segment.iter().enumerate() {
+                    let x = x0 + index;
+                    let old = line.cells[x];
+                    if old.width == 0 {
+                        if x > 0 && line.cells[x - 1].width == 2 {
+                            let previous = line.cells[x - 1];
+                            line.cells[x - 1] = Cell {
+                                bg: previous.bg,
+                                ..Cell::blank()
+                            };
+                        }
+                    } else if old.width == 2 && x + 1 < cols {
+                        let next = line.cells[x + 1];
+                        line.cells[x + 1] = Cell {
+                            bg: next.bg,
+                            ..Cell::blank()
+                        };
+                    }
+                    line.cells[x] = Cell {
+                        ch: byte as char,
+                        extra: 0,
+                        fg,
+                        bg,
+                        attrs,
+                        width: 1,
+                    };
+                }
+                line.wrapped = false;
+                segment[segment.len() - 1] as char
+            };
+            let end_x = x0 + segment.len();
+            if end_x >= cols {
+                self.cursor.x = cols - 1;
+                self.wrap_pending = true;
+            } else {
+                self.cursor.x = end_x;
+            }
+            self.last_printed = Some((y, x0 + segment.len() - 1));
+            self.last_graphic = last;
+            self.mark_row(y);
+            offset += segment.len();
         }
     }
 
@@ -1240,19 +1400,23 @@ impl Terminal {
                 if self.history != 0 {
                     self.scrollback.push_back(removed);
                     while self.scrollback.len() > self.history {
-                        self.scrollback.pop_front();
+                        if let Some(evicted) = self.scrollback.pop_front() {
+                            self.recycle_line(evicted);
+                        }
                     }
                     if self.scroll_offset > 0 {
                         self.scroll_offset = (self.scroll_offset + 1).min(self.scrollback.len());
                     }
+                } else {
+                    self.recycle_line(removed);
                 }
                 let line = self.new_line();
                 self.main.push(line);
             } else {
+                let removed = self.lines_mut().remove(top);
+                self.recycle_line(removed);
                 let line = self.new_line();
-                let lines = self.lines_mut();
-                lines.remove(top);
-                lines.insert(bottom, line);
+                self.lines_mut().insert(bottom, line);
             }
         }
         if shift {
@@ -1685,6 +1849,29 @@ mod tests {
         assert_eq!(terminal.cursor.x, 5);
         feed(&mut terminal, &[b'x'; 16]);
         assert_eq!(terminal.cursor.y, 1);
+    }
+
+    #[test]
+    fn ascii_run_matches_print_across_wraps() {
+        let text = b"abcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()";
+        let mut slow = terminal(3);
+        let mut fast = terminal(3);
+        for &byte in text {
+            slow.print(byte as char);
+        }
+        fast.print_ascii_run(text);
+        assert_eq!(
+            (fast.cursor.x, fast.cursor.y),
+            (slow.cursor.x, slow.cursor.y)
+        );
+        for row in 0..3 {
+            for col in 0..20 {
+                assert_eq!(
+                    fast.lines()[row].cells[col].ch,
+                    slow.lines()[row].cells[col].ch
+                );
+            }
+        }
     }
 
     #[test]
