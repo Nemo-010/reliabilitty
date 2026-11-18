@@ -126,7 +126,7 @@ the full suite with the default settings (1 MiB minimum sample, 10 seconds per
 benchmark). Values are mean milliseconds; lower is better.
 
 | Benchmark | Reliabilitty | st | xfce4-terminal | Alacritty | Ghostty |
-|---|---:|---:|---:|---:|---:|
+|:---:|:---:|:---:|:---:|:---:|
 | cursor_motion | 16 ms | 52 ms | 23 ms | 12 ms | 9 ms |
 | dense_cells | 39 ms | 940 ms | 578 ms | 33 ms | 33 ms |
 | light_cells | 5 ms | 25 ms | 9 ms | 10 ms | 2 ms |
