@@ -1,4 +1,10 @@
 
+## [0.1.6](https://github.com/pkgforge-apps/reliabilitty/compare/v0.1.5...v0.1.6) - 2026-11-18
+
+### Performance
+
+- *(vt)* Clear recycled lines lazily and avoid CSI allocations - ([dc961e6](https://github.com/pkgforge-apps/reliabilitty/commit/dc961e667be8d9435ffe0dd89ac7e8e66ffabfa1))
+
 ## [0.1.5](https://github.com/pkgforge-apps/reliabilitty/compare/v0.1.4...v0.1.5) - 2026-11-18
 
 ### Performance
