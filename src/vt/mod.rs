@@ -317,6 +317,10 @@ pub struct Terminal {
     alt_saved: Option<SavedCursor>,
     scroll_top: usize,
     scroll_bottom: usize,
+    /// Rotation of the scroll region's line slots. Logical row `row` lives in
+    /// physical slot `physical_row(row)`; scrolling a partial region only moves
+    /// this counter, so the line buffer is never shifted.
+    region_offset: usize,
     tabs: Vec<bool>,
     charsets: [Charset; 4],
     active_charset: usize,
@@ -392,6 +396,7 @@ impl Terminal {
             alt_saved: None,
             scroll_top: 0,
             scroll_bottom: rows - 1,
+            region_offset: 0,
             tabs: Vec::new(),
             charsets: [Charset::Ascii; 4],
             active_charset: 0,
@@ -506,16 +511,60 @@ impl Terminal {
         }
     }
 
+    fn region_len(&self) -> usize {
+        self.scroll_bottom.saturating_sub(self.scroll_top) + 1
+    }
+
+    /// Physical slot holding a logical row. Rows outside the scroll region are
+    /// never rotated.
+    #[inline]
+    fn physical_row(&self, row: usize) -> usize {
+        if self.region_offset == 0 || row < self.scroll_top || row > self.scroll_bottom {
+            return row;
+        }
+        self.scroll_top + (row - self.scroll_top + self.region_offset) % self.region_len()
+    }
+
+    #[inline]
+    fn line(&self, row: usize) -> &Line {
+        &self.lines()[self.physical_row(row)]
+    }
+
+    #[inline]
+    fn line_mut(&mut self, row: usize) -> &mut Line {
+        let physical = self.physical_row(row);
+        &mut self.lines_mut()[physical]
+    }
+
+    /// Rotate the region's line slots back so logical and physical rows match.
+    /// Called before structural operations that address lines by physical row.
+    fn normalize_region(&mut self) {
+        if self.region_offset == 0 {
+            return;
+        }
+        let top = self.scroll_top;
+        let bottom = self.scroll_bottom;
+        let offset = self.region_offset;
+        self.lines_mut().make_contiguous()[top..=bottom].rotate_left(offset);
+        self.region_offset = 0;
+    }
+
     fn all_lines(&self) -> Vec<&Line> {
-        let mut lines = Vec::with_capacity(self.scrollback.len() + self.lines().len());
+        let active = self.lines();
+        let mut lines = Vec::with_capacity(self.scrollback.len() + active.len());
         lines.extend(self.scrollback.iter());
-        lines.extend(self.lines());
+        for row in 0..self.rows {
+            lines.push(&active[self.physical_row(row)]);
+        }
         lines
     }
 
     fn search_lines(&self) -> Vec<&Line> {
         if self.in_alt() {
-            self.lines().iter().collect()
+            let active = self.lines();
+            (0..self.rows)
+                .map(|row| &active[self.physical_row(row)])
+                .collect()
         } else {
             self.all_lines()
         }
@@ -525,9 +574,8 @@ impl Terminal {
         if row >= self.rows {
             return None;
         }
-        let active = self.lines();
         if self.scroll_offset == 0 {
-            return active.get(row);
+            return Some(self.line(row));
         }
         let saved = self.scrollback.len();
         let start = saved.saturating_sub(self.scroll_offset);
@@ -535,7 +583,7 @@ impl Terminal {
         if index < saved {
             self.scrollback.get(index)
         } else {
-            active.get(index - saved)
+            self.lines().get(self.physical_row(index - saved))
         }
     }
 
@@ -1144,6 +1192,7 @@ impl Terminal {
         if cols == self.cols && rows == self.rows {
             return;
         }
+        self.normalize_region();
         self.cols = cols;
         self.rows = rows;
         for line in &mut self.main {
@@ -1298,31 +1347,31 @@ impl Terminal {
         }
         let y = self.cursor.y;
         let x = self.cursor.x;
-        self.clear_wide_at(y, x);
-        if width == 2 {
-            self.clear_wide_at(y, x + 1);
-        }
+        let cols = self.cols;
+        let (fg, bg, attrs) = (self.pen.fg, self.pen.bg, self.pen.attrs);
         let cell = Cell {
             ch,
             extra: 0,
-            fg: self.pen.fg,
-            bg: self.pen.bg,
-            attrs: self.pen.attrs,
+            fg,
+            bg,
+            attrs,
             width: width as u8,
         };
-        {
-            let line = &mut self.lines_mut()[y];
-            line.cells[x] = cell;
-            line.mark_written(x);
-            line.wrapped = false;
-            if width == 2 {
-                let mut continuation = cell;
-                continuation.ch = ' ';
-                continuation.extra = 0;
-                continuation.width = 0;
-                line.cells[x + 1] = continuation;
-                line.mark_written(x + 1);
-            }
+        let line = self.line_mut(y);
+        clear_wide_in(line, x, cols);
+        if width == 2 {
+            clear_wide_in(line, x + 1, cols);
+        }
+        line.cells[x] = cell;
+        line.mark_written(x);
+        line.wrapped = false;
+        if width == 2 {
+            let mut continuation = cell;
+            continuation.ch = ' ';
+            continuation.extra = 0;
+            continuation.width = 0;
+            line.cells[x + 1] = continuation;
+            line.mark_written(x + 1);
         }
         self.last_printed = Some((y, x));
         self.last_graphic = ch;
@@ -1351,6 +1400,15 @@ impl Terminal {
         }
         let cols = self.cols;
         let (fg, bg, attrs) = (self.pen.fg, self.pen.bg, self.pen.attrs);
+        let (region_top, region_bottom, region_offset) =
+            (self.scroll_top, self.scroll_bottom, self.region_offset);
+        let map = |row: usize| -> usize {
+            if region_offset == 0 || row < region_top || row > region_bottom {
+                row
+            } else {
+                region_top + (row - region_top + region_offset) % (region_bottom - region_top + 1)
+            }
+        };
         let x0 = self.cursor.x.min(cols - 1);
         let end = x0 + bytes.len();
         let end_row = self.cursor.y + (end - 1) / cols;
@@ -1365,9 +1423,9 @@ impl Terminal {
             {
                 let lines = self.lines_mut();
                 let mut x = x0;
-                let mut y = start_y;
+                let mut physical = map(start_y);
                 for &byte in bytes {
-                    let line = &mut lines[y];
+                    let line = &mut lines[physical];
                     let old = line.cells[x];
                     if old.width == 0 {
                         if x > 0 && line.cells[x - 1].width == 2 {
@@ -1397,7 +1455,10 @@ impl Terminal {
                     x += 1;
                     if x == cols {
                         x = 0;
-                        y += 1;
+                        physical += 1;
+                        if physical > region_bottom {
+                            physical = region_top;
+                        }
                     }
                 }
             }
@@ -1431,7 +1492,7 @@ impl Terminal {
             let segment = &bytes[offset..offset + take];
             let last = {
                 let lines = self.lines_mut();
-                let line = &mut lines[y];
+                let line = &mut lines[map(y)];
                 for (index, &byte) in segment.iter().enumerate() {
                     let x = x0 + index;
                     let old = line.cells[x];
@@ -1499,7 +1560,7 @@ impl Terminal {
         if y >= self.rows || x >= self.cols {
             return;
         }
-        let mut cell = self.lines()[y].cells[x];
+        let mut cell = self.line(y).cells[x];
         if cell.width == 0 && x > 0 {
             return self.append_to_cluster(y, x - 1, ch);
         }
@@ -1518,7 +1579,7 @@ impl Terminal {
         let cols = self.cols;
         let mut advance = false;
         {
-            let line = &mut self.lines_mut()[y];
+            let line = self.line_mut(y);
             line.cells[x] = cell;
             line.mark_written(x);
             let next = x + 1;
@@ -1562,38 +1623,6 @@ impl Terminal {
         self.extras.push(boxed.clone());
         self.extras_map.insert(boxed, id);
         id
-    }
-
-    fn clear_wide_at(&mut self, y: usize, x: usize) {
-        let cols = self.cols;
-        let line = &mut self.lines_mut()[y];
-        let Some(cell) = line.cells.get(x).copied() else {
-            return;
-        };
-        if cell.width == 0 {
-            if x > 0 {
-                let previous = line.cells[x - 1];
-                if previous.width == 2 {
-                    line.cells[x - 1] = Cell {
-                        bg: previous.bg,
-                        ..Cell::blank()
-                    };
-                    line.mark_written(x - 1);
-                }
-            }
-            line.cells[x] = Cell {
-                bg: cell.bg,
-                ..Cell::blank()
-            };
-            line.mark_written(x);
-        } else if cell.width == 2 && x + 1 < cols {
-            let next = line.cells[x + 1];
-            line.cells[x + 1] = Cell {
-                bg: next.bg,
-                ..Cell::blank()
-            };
-            line.mark_written(x + 1);
-        }
     }
 
     fn execute_control(&mut self, byte: u8) {
@@ -1709,6 +1738,7 @@ impl Terminal {
         // cells. Only a scrollback view breaks the uniform shift.
         let shift = full && self.scroll_offset == 0;
         if full && allow_history && !self.in_alt() {
+            self.normalize_region();
             for _ in 0..count {
                 let removed = self.main.pop_front().unwrap_or_else(|| self.new_line());
                 if self.history != 0 {
@@ -1728,14 +1758,18 @@ impl Terminal {
                 self.main.push_back(line);
             }
         } else {
-            let lines = self.lines_mut().make_contiguous();
-            for _ in 0..count {
-                for column in top..bottom {
-                    lines.swap(column, column + 1);
-                }
-                lines[bottom].clear_written();
-                lines[bottom].wrapped = false;
+            // The region is a ring: advancing the offset moves every line up
+            // at once. Only the slots wrapping into the bottom margin need a
+            // fresh line, so the cost is O(count), not O(region size).
+            let len = bottom - top + 1;
+            let offset = self.region_offset;
+            for step in 0..count {
+                let slot = top + (offset + step) % len;
+                let blank = self.new_line();
+                let old = std::mem::replace(&mut self.lines_mut()[slot], blank);
+                self.recycle_line(old);
             }
+            self.region_offset = (offset + count) % len;
         }
         if shift {
             self.pending_scroll += count as i32;
@@ -1758,6 +1792,7 @@ impl Terminal {
         let full = top == 0 && bottom + 1 == self.rows;
         let shift = full && !self.in_alt() && self.scroll_offset == 0;
         if full {
+            self.normalize_region();
             for _ in 0..count {
                 let removed = self
                     .lines_mut()
@@ -1768,14 +1803,16 @@ impl Terminal {
                 self.lines_mut().push_front(line);
             }
         } else {
-            let lines = self.lines_mut().make_contiguous();
+            let len = bottom - top + 1;
+            let mut offset = self.region_offset;
             for _ in 0..count {
-                for column in (top..bottom).rev() {
-                    lines.swap(column, column + 1);
-                }
-                lines[top].clear_written();
-                lines[top].wrapped = false;
+                offset = if offset == 0 { len - 1 } else { offset - 1 };
+                let slot = top + offset;
+                let blank = self.new_line();
+                let old = std::mem::replace(&mut self.lines_mut()[slot], blank);
+                self.recycle_line(old);
             }
+            self.region_offset = offset;
         }
         if shift {
             self.pending_scroll -= count as i32;
@@ -1797,7 +1834,7 @@ impl Terminal {
         let count = count.min(self.cols - x);
         let cols = self.cols;
         let bg = self.pen.bg;
-        let line = &mut self.lines_mut()[y];
+        let line = self.line_mut(y);
         let tail: Vec<Cell> = line.cells[x..cols - count].to_vec();
         line.cells[x + count..].copy_from_slice(&tail);
         for cell in &mut line.cells[x..x + count] {
@@ -1816,7 +1853,7 @@ impl Terminal {
         let count = count.min(self.cols - x);
         let cols = self.cols;
         let bg = self.pen.bg;
-        let line = &mut self.lines_mut()[y];
+        let line = self.line_mut(y);
         let tail: Vec<Cell> = line.cells[x + count..].to_vec();
         line.cells[x..cols - count].copy_from_slice(&tail);
         for cell in &mut line.cells[cols - count..] {
@@ -1839,7 +1876,7 @@ impl Terminal {
         }
         let bg = self.pen.bg;
         let cols = self.cols;
-        let line = &mut self.lines_mut()[y];
+        let line = self.line_mut(y);
         if from > 0 && line.cells[from].width == 0 {
             line.cells[from - 1] = Cell {
                 bg,
@@ -1871,6 +1908,7 @@ impl Terminal {
         if self.cursor.y < self.scroll_top || self.cursor.y > self.scroll_bottom {
             return;
         }
+        self.normalize_region();
         let count = count.min(self.scroll_bottom - self.cursor.y + 1);
         for _ in 0..count {
             let line = self.new_line();
@@ -1888,6 +1926,7 @@ impl Terminal {
         if self.cursor.y < self.scroll_top || self.cursor.y > self.scroll_bottom {
             return;
         }
+        self.normalize_region();
         let count = count.min(self.scroll_bottom - self.cursor.y + 1);
         for _ in 0..count {
             let line = self.new_line();
@@ -1979,6 +2018,8 @@ impl Terminal {
             if save_cursor {
                 self.alt_saved = Some(self.saved_cursor());
             }
+            self.normalize_region();
+            self.region_offset = 0;
             self.alt = Some(
                 (0..self.rows)
                     .map(|_| self.new_line())
@@ -1989,7 +2030,10 @@ impl Terminal {
             self.wrap_pending = false;
             self.last_printed = None;
             self.mark_all();
-        } else if self.alt.take().is_some() {
+        } else if self.alt.is_some() {
+            self.normalize_region();
+            self.region_offset = 0;
+            self.alt.take();
             if save_cursor {
                 if let Some(saved) = self.alt_saved.take() {
                     self.restore_saved(saved);
@@ -2002,6 +2046,7 @@ impl Terminal {
     }
 
     fn hard_reset(&mut self) {
+        self.region_offset = 0;
         self.main.clear();
         for _ in 0..self.rows {
             let line = self.new_line();
@@ -2051,6 +2096,8 @@ impl Terminal {
     fn soft_reset(&mut self) {
         self.cursor.visible = true;
         self.pen = Pen::default();
+        self.normalize_region();
+        self.region_offset = 0;
         self.scroll_top = 0;
         self.scroll_bottom = self.rows - 1;
         self.insert_mode = false;
@@ -2066,6 +2113,35 @@ impl Terminal {
         self.wrap_pending = false;
         self.last_printed = None;
         self.mark_all();
+    }
+}
+
+/// Clears a wide glyph or continuation cell before overwriting it.
+fn clear_wide_in(line: &mut Line, x: usize, cols: usize) {
+    let Some(cell) = line.cells.get(x).copied() else {
+        return;
+    };
+    if cell.width == 0 {
+        if x > 0 && line.cells[x - 1].width == 2 {
+            let previous = line.cells[x - 1];
+            line.cells[x - 1] = Cell {
+                bg: previous.bg,
+                ..Cell::blank()
+            };
+            line.mark_written(x - 1);
+        }
+        line.cells[x] = Cell {
+            bg: cell.bg,
+            ..Cell::blank()
+        };
+        line.mark_written(x);
+    } else if cell.width == 2 && x + 1 < cols {
+        let next = line.cells[x + 1];
+        line.cells[x + 1] = Cell {
+            bg: next.bg,
+            ..Cell::blank()
+        };
+        line.mark_written(x + 1);
     }
 }
 
@@ -2294,6 +2370,101 @@ mod tests {
                 assert!(cell.is_blank(), "row {row} col {col} = {cell:?}");
             }
         }
+    }
+
+    #[test]
+    fn region_scroll_rotates_lines_in_place() {
+        let mut terminal = terminal(5);
+        terminal.scroll_top = 1;
+        terminal.scroll_bottom = 3;
+        for (row, ch) in [(1, 'A'), (2, 'B'), (3, 'C')] {
+            terminal.cursor.x = 0;
+            terminal.cursor.y = row;
+            terminal.print(ch);
+        }
+        terminal.scroll_region_up(1, 3, 1, true);
+        assert_eq!(terminal.region_offset, 1);
+        assert_eq!(terminal.visible_line(1).unwrap().cells[0].ch, 'B');
+        assert_eq!(terminal.visible_line(2).unwrap().cells[0].ch, 'C');
+        assert!(terminal.visible_line(3).unwrap().cells[0].is_blank());
+        terminal.scroll_region_up(1, 3, 1, true);
+        assert_eq!(terminal.visible_line(1).unwrap().cells[0].ch, 'C');
+        assert_eq!(terminal.region_offset, 2);
+        terminal.scroll_region_up(1, 3, 1, true);
+        assert_eq!(terminal.region_offset, 0);
+        for row in 1..=3 {
+            assert!(terminal.visible_line(row).unwrap().cells[0].is_blank());
+        }
+    }
+
+    #[test]
+    fn region_scroll_down_and_normalize_restore_logical_order() {
+        let mut terminal = terminal(5);
+        terminal.scroll_top = 1;
+        terminal.scroll_bottom = 3;
+        for (row, ch) in [(1, 'A'), (2, 'B'), (3, 'C')] {
+            terminal.cursor.x = 0;
+            terminal.cursor.y = row;
+            terminal.print(ch);
+        }
+        terminal.scroll_region_down(1, 3, 1);
+        assert!(terminal.visible_line(1).unwrap().cells[0].is_blank());
+        assert_eq!(terminal.visible_line(2).unwrap().cells[0].ch, 'A');
+        assert_eq!(terminal.visible_line(3).unwrap().cells[0].ch, 'B');
+        terminal.normalize_region();
+        assert_eq!(terminal.region_offset, 0);
+        assert!(terminal.line(1).cells[0].is_blank());
+        assert_eq!(terminal.line(2).cells[0].ch, 'A');
+        assert_eq!(terminal.line(3).cells[0].ch, 'B');
+    }
+
+    #[test]
+    fn region_scroll_then_write_hits_the_visible_row() {
+        let mut terminal = terminal(5);
+        terminal.scroll_top = 1;
+        terminal.scroll_bottom = 3;
+        for (row, ch) in [(1, 'A'), (2, 'B'), (3, 'C')] {
+            terminal.cursor.x = 0;
+            terminal.cursor.y = row;
+            terminal.print(ch);
+        }
+        terminal.scroll_region_up(1, 3, 1, true);
+        terminal.cursor.x = 0;
+        terminal.cursor.y = 1;
+        terminal.print('Z');
+        assert_eq!(terminal.visible_line(1).unwrap().cells[0].ch, 'Z');
+        assert_eq!(terminal.visible_line(0).unwrap().cells[0].ch, ' ');
+    }
+
+    #[test]
+    fn region_offset_leaves_scrollback_view_untouched() {
+        let mut terminal = terminal(3);
+        feed(&mut terminal, b"one\r\ntwo\r\nthree\r\nfour");
+        feed(&mut terminal, b"\x1b[2;3r\x1b[S");
+        assert_eq!(terminal.region_offset, 1);
+        terminal.set_scroll_offset(1);
+        assert_eq!(terminal.visible_line(0).unwrap().cells[0].ch, 'o');
+        terminal.set_scroll_offset(0);
+        assert_eq!(terminal.visible_line(0).unwrap().cells[0].ch, 't');
+        assert_eq!(terminal.visible_line(1).unwrap().cells[0].ch, 'f');
+        assert!(terminal.visible_line(2).unwrap().cells[0].is_blank());
+    }
+
+    #[test]
+    fn changing_scroll_region_normalizes_the_ring() {
+        let mut terminal = terminal(5);
+        feed(&mut terminal, b"\x1b[2;4r");
+        for (row, ch) in [(1, 'A'), (2, 'B'), (3, 'C')] {
+            terminal.cursor.x = 0;
+            terminal.cursor.y = row;
+            terminal.print(ch);
+        }
+        feed(&mut terminal, b"\x1b[S");
+        assert_eq!(terminal.region_offset, 1);
+        feed(&mut terminal, b"\x1b[1;5r");
+        assert_eq!(terminal.region_offset, 0);
+        assert_eq!(terminal.visible_line(1).unwrap().cells[0].ch, 'B');
+        assert_eq!(terminal.visible_line(2).unwrap().cells[0].ch, 'C');
     }
 
     #[test]

@@ -571,6 +571,8 @@ impl Terminal {
         let top = top.max(1) as usize - 1;
         let bottom = (bottom.max(1) as usize - 1).min(self.rows - 1);
         if top < bottom {
+            self.normalize_region();
+            self.region_offset = 0;
             self.scroll_top = top;
             self.scroll_bottom = bottom;
             let y = if self.origin_mode { top } else { 0 };
