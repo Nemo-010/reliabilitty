@@ -1,4 +1,10 @@
 
+## [0.1.8](https://github.com/pkgforge-apps/reliabilitty/compare/v0.1.7...v0.1.8) - 2026-11-18
+
+### Performance
+
+- *(vt)* Narrow region-scroll damage and rotate lines in place - ([602b167](https://github.com/pkgforge-apps/reliabilitty/commit/602b1679cd657ccd0d8cd9464f87e24c3af13c90))
+
 ## [0.1.7](https://github.com/pkgforge-apps/reliabilitty/compare/v0.1.6...v0.1.7) - 2026-11-18
 
 ### Bug Fixes
