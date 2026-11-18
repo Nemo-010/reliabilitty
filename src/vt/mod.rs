@@ -1445,8 +1445,8 @@ impl Terminal {
         // it and let the renderer memmove the canvas instead of redrawing all
         // cells. Only a scrollback view breaks the uniform shift.
         let shift = full && self.scroll_offset == 0;
-        for _ in 0..count {
-            if full && allow_history && !self.in_alt() {
+        if full && allow_history && !self.in_alt() {
+            for _ in 0..count {
                 let removed = self.main.pop_front().unwrap_or_else(|| self.new_line());
                 if self.history != 0 {
                     self.scrollback.push_back(removed);
@@ -1463,12 +1463,15 @@ impl Terminal {
                 }
                 let line = self.new_line();
                 self.main.push_back(line);
-            } else {
-                if let Some(removed) = self.lines_mut().remove(top) {
-                    self.recycle_line(removed);
+            }
+        } else {
+            let lines = self.lines_mut().make_contiguous();
+            for _ in 0..count {
+                for column in top..bottom {
+                    lines.swap(column, column + 1);
                 }
-                let line = self.new_line();
-                self.lines_mut().insert(bottom, line);
+                lines[bottom].clear_written();
+                lines[bottom].wrapped = false;
             }
         }
         if shift {
@@ -1481,7 +1484,9 @@ impl Terminal {
                 self.mark_row(row);
             }
         } else {
-            self.mark_all();
+            for row in top..=bottom {
+                self.mark_row(row);
+            }
         }
     }
 
@@ -1489,8 +1494,8 @@ impl Terminal {
         let count = count.min(bottom - top + 1);
         let full = top == 0 && bottom + 1 == self.rows;
         let shift = full && !self.in_alt() && self.scroll_offset == 0;
-        for _ in 0..count {
-            if full {
+        if full {
+            for _ in 0..count {
                 let removed = self
                     .lines_mut()
                     .pop_back()
@@ -1498,12 +1503,15 @@ impl Terminal {
                 self.recycle_line(removed);
                 let line = self.new_line();
                 self.lines_mut().push_front(line);
-            } else {
-                if let Some(removed) = self.lines_mut().remove(bottom) {
-                    self.recycle_line(removed);
+            }
+        } else {
+            let lines = self.lines_mut().make_contiguous();
+            for _ in 0..count {
+                for column in (top..bottom).rev() {
+                    lines.swap(column, column + 1);
                 }
-                let line = self.new_line();
-                self.lines_mut().insert(top, line);
+                lines[top].clear_written();
+                lines[top].wrapped = false;
             }
         }
         if shift {
@@ -1514,7 +1522,9 @@ impl Terminal {
                 self.mark_row(row);
             }
         } else {
-            self.mark_all();
+            for row in top..=bottom {
+                self.mark_row(row);
+            }
         }
     }
 
