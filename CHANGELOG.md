@@ -1,4 +1,11 @@
 
+## [0.1.5](https://github.com/pkgforge-apps/reliabilitty/compare/v0.1.4...v0.1.5) - 2026-11-18
+
+### Performance
+
+- *(vt)* Use a deque for the screen buffer so full scrolls are O(1) - ([3cef596](https://github.com/pkgforge-apps/reliabilitty/commit/3cef596862c62fb5a61c2a9ebccd999d6aa74dcb))
+- Drain PTY before drawing and speed up text and glyph handling - ([d4b0e71](https://github.com/pkgforge-apps/reliabilitty/commit/d4b0e719d933ed147767c2ed73a6e343eee7cc5c))
+
 ## [0.1.4](https://github.com/pkgforge-apps/reliabilitty/compare/v0.1.3...v0.1.4) - 2026-11-18
 
 ### Bug Fixes
