@@ -166,6 +166,6 @@ benchmark). Values are mean milliseconds; lower is better.
 | unicode | 18 ms | 132 ms | 94 ms | 9 ms | 3 ms |
 | **Total** | **1438 ms** | **3027 ms** | **1852 ms** | **657 ms** | **707 ms** |
 
-The GPU terminals lead on pure PTY read throughput. Reliabilitty is close to
-st overall and well ahead of it on the cell and unicode workloads, but VTE is
-faster on several of the line-scrolling benchmarks.
+The GPU terminals lead on pure PTY read throughput. Reliabilitty is about 2x
+faster than st overall and well ahead on the cell and unicode workloads, but
+VTE is faster on several of the line-scrolling benchmarks.
