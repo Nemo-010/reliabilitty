@@ -83,6 +83,36 @@ impl Utf8 {
     }
 }
 
+/// Parses `ESC [ row ; col H` without going through the byte state machine.
+fn parse_cursor_position(bytes: &[u8]) -> Option<(u32, u32, usize)> {
+    if bytes.len() < 5 || bytes[0] != 0x1b || bytes[1] != b'[' {
+        return None;
+    }
+    let mut i = 2;
+    let mut row = 0u32;
+    while i < bytes.len() && bytes[i].is_ascii_digit() {
+        row = row
+            .saturating_mul(10)
+            .saturating_add((bytes[i] - b'0') as u32);
+        i += 1;
+    }
+    if i >= bytes.len() || bytes[i] != b';' {
+        return None;
+    }
+    i += 1;
+    let mut col = 0u32;
+    while i < bytes.len() && bytes[i].is_ascii_digit() {
+        col = col
+            .saturating_mul(10)
+            .saturating_add((bytes[i] - b'0') as u32);
+        i += 1;
+    }
+    if i >= bytes.len() || bytes[i] != b'H' || row == 0 || col == 0 {
+        return None;
+    }
+    Some((row, col, i + 1))
+}
+
 pub struct Parser {
     state: State,
     intermediates: [u8; 2],
@@ -123,6 +153,14 @@ impl Parser {
     pub fn advance(&mut self, bytes: &[u8], terminal: &mut Terminal) {
         let mut index = 0;
         while index < bytes.len() {
+            if matches!(self.state, State::Ground)
+                && self.utf8.needed == 0
+                && let Some((row, col, len)) = parse_cursor_position(&bytes[index..])
+            {
+                terminal.csi_dispatch(0, &[], &[row, col], &[], b'H');
+                index += len;
+                continue;
+            }
             if matches!(self.state, State::Ground) && self.utf8.needed == 0 {
                 let start = index;
                 while index < bytes.len() && (0x20..=0x7e).contains(&bytes[index]) {
@@ -494,6 +532,23 @@ mod tests {
             CursorStyle::Block,
             false,
         )
+    }
+
+    #[test]
+    fn cursor_position_fast_path_matches_state_machine() {
+        let mut fast = terminal();
+        let mut slow = terminal();
+        let mut a = Parser::new();
+        let mut b = Parser::new();
+        a.advance(b"\x1b[2;3HX", &mut fast);
+        b.advance(b"\x1b[2;3H", &mut slow);
+        b.advance(b"X", &mut slow);
+        assert_eq!(
+            (fast.cursor.x, fast.cursor.y),
+            (slow.cursor.x, slow.cursor.y)
+        );
+        assert_eq!(fast.lines()[1].cells[2].ch, 'X');
+        assert_eq!(fast.lines()[1].cells[2].ch, slow.lines()[1].cells[2].ch);
     }
 
     #[test]
