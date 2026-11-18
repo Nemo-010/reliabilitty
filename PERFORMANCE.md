@@ -5,7 +5,9 @@ Ghostty. The numbers are indicative, not a full benchmark suite.
 
 ## Environment
 
-- Artix Linux, X11 with i3 and a compositor.
+- Artix Linux, kernel 7.2.15-artix1-1, X11 with i3 and a compositor.
+- CPU: Intel Xeon E5-1650 v4 @ 3.60 GHz.
+- GPU: AMD Radeon RX 580 2048SP.
 - Real desktop session, one terminal running at a time.
 - Clean `$XDG_CONFIG_HOME` under `/tmp` for every terminal. Ghostty behaves
   very differently with the real config; see "Ghostty and GTK4" below.
