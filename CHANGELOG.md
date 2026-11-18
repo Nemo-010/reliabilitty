@@ -1,4 +1,14 @@
 
+## [0.1.4](https://github.com/pkgforge-apps/reliabilitty/compare/v0.1.3...v0.1.4) - 2026-11-18
+
+### Bug Fixes
+
+- Recognize numpad keys and keep pager scroll content - ([21c7bd2](https://github.com/pkgforge-apps/reliabilitty/commit/21c7bd2bba57728ebff846ebb404618e1ab82c48))
+
+### Documentation
+
+- Update performance results ([#8](https://github.com/pkgforge-apps/reliabilitty/pull/8)) - ([af38a63](https://github.com/pkgforge-apps/reliabilitty/commit/af38a630f24dccb44f72433ceae610e102719929))
+
 ## [0.1.3](https://github.com/pkgforge-apps/reliabilitty/compare/v0.1.2...v0.1.3) - 2026-11-17
 
 ### Performance
