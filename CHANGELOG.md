@@ -1,4 +1,11 @@
 
+## [0.1.10](https://github.com/pkgforge-apps/reliabilitty/compare/v0.1.9...v0.1.10) - 2026-11-18
+
+### Performance
+
+- *(vt)* Blank scrolled lines in place without a pool - ([bd5c92e](https://github.com/pkgforge-apps/reliabilitty/commit/bd5c92ea3b2342eaa12a81b9fced228dfe6805f1))
+- *(vt)* Make scroll regions O(1) with a logical line ring - ([1f1ca72](https://github.com/pkgforge-apps/reliabilitty/commit/1f1ca726a0c49f06ae2d796872fa2365e36a4f89))
+
 ## [0.1.9](https://github.com/pkgforge-apps/reliabilitty/compare/v0.1.8...v0.1.9) - 2026-11-18
 
 ### Features
