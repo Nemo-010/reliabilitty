@@ -345,6 +345,9 @@ pub struct Terminal {
     bracketed_paste: bool,
     focus_events: bool,
     mouse_mode: MouseMode,
+    /// Kitty keyboard protocol flags and push/pop stacks, per screen.
+    kitty_flags: [u32; 2],
+    kitty_stack: [Vec<u32>; 2],
     mouse_encoding: MouseEncoding,
     title: String,
     title_dirty: bool,
@@ -420,6 +423,8 @@ impl Terminal {
             bracketed_paste: false,
             focus_events: false,
             mouse_mode: MouseMode::Off,
+            kitty_flags: [0, 0],
+            kitty_stack: [Vec::new(), Vec::new()],
             mouse_encoding: MouseEncoding::X10,
             title: "Reliabilitty".to_string(),
             title_dirty: false,
@@ -491,6 +496,56 @@ impl Terminal {
 
     pub fn mouse_mode(&self) -> MouseMode {
         self.mouse_mode
+    }
+
+    fn kitty_index(&self) -> usize {
+        usize::from(self.in_alt())
+    }
+
+    pub fn kitty_flags(&self) -> u32 {
+        self.kitty_flags[self.kitty_index()]
+    }
+
+    /// Applies `CSI = flags ; mode u` to the current screen.
+    pub fn set_kitty_flags(&mut self, flags: u32, mode: u32) {
+        let index = self.kitty_index();
+        let current = &mut self.kitty_flags[index];
+        match mode {
+            2 => *current |= flags,
+            3 => *current &= !flags,
+            _ => *current = flags,
+        }
+    }
+
+    /// Pushes the current flags; the supplied flags become active.
+    pub fn push_kitty_flags(&mut self, flags: u32) {
+        let index = self.kitty_index();
+        let stack = &mut self.kitty_stack[index];
+        if stack.len() >= 8 {
+            stack.remove(0);
+        }
+        stack.push(self.kitty_flags[index]);
+        self.kitty_flags[index] = flags;
+    }
+
+    /// Pops `count` entries; an empty stack resets the flags to zero.
+    pub fn pop_kitty_flags(&mut self, count: usize) {
+        let index = self.kitty_index();
+        for _ in 0..count {
+            match self.kitty_stack[index].pop() {
+                Some(flags) => self.kitty_flags[index] = flags,
+                None => {
+                    self.kitty_flags[index] = 0;
+                    break;
+                }
+            }
+        }
+    }
+
+    pub fn answer_kitty_flags(&mut self) {
+        let flags = self.kitty_flags();
+        self.response
+            .extend_from_slice(format!("\x1b[?{flags}u").as_bytes());
     }
 
     pub fn app_cursor(&self) -> bool {
@@ -2103,6 +2158,8 @@ impl Terminal {
         self.bracketed_paste = false;
         self.focus_events = false;
         self.mouse_mode = MouseMode::Off;
+        self.kitty_flags = [0, 0];
+        self.kitty_stack = [Vec::new(), Vec::new()];
         self.mouse_encoding = MouseEncoding::X10;
         self.theme = self.default_theme.clone();
         self.reset_tabs();
@@ -2131,6 +2188,8 @@ impl Terminal {
         self.app_cursor = false;
         self.app_keypad = false;
         self.mouse_mode = MouseMode::Off;
+        self.kitty_flags = [0, 0];
+        self.kitty_stack = [Vec::new(), Vec::new()];
         self.mouse_encoding = MouseEncoding::X10;
         self.charsets = [Charset::Ascii; 4];
         self.active_charset = 0;
@@ -2386,6 +2445,36 @@ mod tests {
         assert_eq!(terminal.lines()[0].cells[0].ch, 'A');
         assert!(terminal.lines()[0].cells[1].is_blank());
         assert_eq!(terminal.lines()[0].cells[1].width, 1);
+    }
+
+    #[test]
+    fn kitty_keyboard_modes_and_stacks() {
+        let mut terminal = terminal(4);
+        feed(&mut terminal, b"\x1b[=1u");
+        assert_eq!(terminal.kitty_flags(), 1);
+        feed(&mut terminal, b"\x1b[=3;2u");
+        assert_eq!(terminal.kitty_flags(), 3);
+        feed(&mut terminal, b"\x1b[=2;3u");
+        assert_eq!(terminal.kitty_flags(), 1);
+        terminal.push_kitty_flags(5);
+        assert_eq!(terminal.kitty_flags(), 5);
+        terminal.pop_kitty_flags(1);
+        assert_eq!(terminal.kitty_flags(), 1);
+        terminal.pop_kitty_flags(1);
+        assert_eq!(terminal.kitty_flags(), 0);
+        terminal.answer_kitty_flags();
+        assert_eq!(terminal.take_output(), b"\x1b[?0u");
+    }
+
+    #[test]
+    fn kitty_keyboard_stacks_are_separate_per_screen() {
+        let mut terminal = terminal(4);
+        feed(&mut terminal, b"\x1b[=1u\x1b[?1049h");
+        assert_eq!(terminal.kitty_flags(), 0);
+        feed(&mut terminal, b"\x1b[=2u");
+        assert_eq!(terminal.kitty_flags(), 2);
+        feed(&mut terminal, b"\x1b[?1049l");
+        assert_eq!(terminal.kitty_flags(), 1);
     }
 
     #[test]

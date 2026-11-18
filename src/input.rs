@@ -345,6 +345,36 @@ impl Composer {
     }
 }
 
+/// Encodes a key press with the kitty protocol's disambiguation flag enabled.
+/// Only the ambiguous cases move to CSI-u; plain text keeps its legacy bytes.
+pub fn encode_kitty_key(keysym: u32, mods: Mods, composer: &mut Composer) -> Option<Vec<u8>> {
+    let raw = Keysym::new(keysym).raw();
+    // Keep Enter, Tab and Backspace as raw bytes: a crashed application must
+    // not prevent the user from typing a shell command.
+    if matches!(raw, key::Return | key::Tab | key::BackSpace) || dead_key(keysym).is_some() {
+        return encode_key(keysym, mods, false, false, composer);
+    }
+    if raw == key::Escape {
+        let parameter = mods.parameter();
+        composer.reset();
+        return Some(format!("\x1b[27;{parameter}u").into_bytes());
+    }
+    let Some(ch) = Keysym::new(keysym).key_char() else {
+        // Functional keys already have unambiguous CSI forms with modifiers.
+        return encode_key(keysym, mods, false, false, composer);
+    };
+    if ch.is_control() {
+        return encode_key(keysym, mods, false, false, composer);
+    }
+    let parameter = mods.parameter();
+    if parameter <= 2 {
+        return encode_key(keysym, mods, false, false, composer);
+    }
+    let code = ch.to_lowercase().next().unwrap_or(ch) as u32;
+    composer.reset();
+    Some(format!("\x1b[{code};{parameter}u").into_bytes())
+}
+
 /// Encodes a key press for the PTY. `None` means the key is consumed (a dead
 /// key, or an unsupported modifier combination).
 pub fn encode_key(
@@ -562,6 +592,53 @@ mod tests {
         assert_eq!(normalize_key("PageUp"), "pageup");
         assert_eq!(normalize_key("Esc"), "escape");
         assert_eq!(normalize_key("V"), "v");
+    }
+
+    #[test]
+    fn kitty_disambiguation_encodes_modifiers() {
+        let mut composer = Composer::default();
+        let ctrl_shift = Mods {
+            control: true,
+            shift: true,
+            ..Mods::default()
+        };
+        assert_eq!(
+            encode_kitty_key(key::a, ctrl_shift, &mut composer).unwrap(),
+            b"\x1b[97;6u"
+        );
+        let ctrl = Mods {
+            control: true,
+            ..Mods::default()
+        };
+        assert_eq!(
+            encode_kitty_key(key::c, ctrl, &mut composer).unwrap(),
+            b"\x1b[99;5u"
+        );
+        assert_eq!(
+            encode_kitty_key(key::Escape, Mods::default(), &mut composer).unwrap(),
+            b"\x1b[27;1u"
+        );
+    }
+
+    #[test]
+    fn kitty_disambiguation_keeps_plain_text_and_controls() {
+        let mut composer = Composer::default();
+        assert_eq!(
+            encode_kitty_key(key::a, Mods::default(), &mut composer).unwrap(),
+            b"a"
+        );
+        let shift = Mods {
+            shift: true,
+            ..Mods::default()
+        };
+        assert_eq!(
+            encode_kitty_key(key::A, shift, &mut composer).unwrap(),
+            b"A"
+        );
+        assert_eq!(
+            encode_kitty_key(key::Return, Mods::default(), &mut composer).unwrap(),
+            b"\r"
+        );
     }
 
     #[test]

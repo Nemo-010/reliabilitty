@@ -10,7 +10,7 @@ use xkeysym::{Keysym, key};
 
 use crate::cli::Cli;
 use crate::config::{Config, Padding};
-use crate::input::{Action, Bindings, Composer, Mods, encode_key};
+use crate::input::{Action, Bindings, Composer, Mods, encode_key, encode_kitty_key};
 use crate::pty::Pty;
 use crate::render::{Canvas, Renderer, pixel};
 use crate::scale;
@@ -450,13 +450,18 @@ impl App {
             self.handle_search_key(keysym, mods);
             return;
         }
-        if let Some(bytes) = encode_key(
-            keysym,
-            mods,
-            self.terminal.app_cursor(),
-            self.terminal.app_keypad(),
-            &mut self.composer,
-        ) {
+        let bytes = if self.terminal.kitty_flags() & 1 != 0 {
+            encode_kitty_key(keysym, mods, &mut self.composer)
+        } else {
+            encode_key(
+                keysym,
+                mods,
+                self.terminal.app_cursor(),
+                self.terminal.app_keypad(),
+                &mut self.composer,
+            )
+        };
+        if let Some(bytes) = bytes {
             self.terminal.scroll_to_bottom();
             self.terminal.push_input(&bytes);
         }

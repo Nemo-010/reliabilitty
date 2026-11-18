@@ -90,6 +90,27 @@ impl Terminal {
             // Silence is a valid DECRQSS answer.
             return;
         }
+        if final_byte == b'u' && intermediates.is_empty() {
+            match private {
+                b'=' => {
+                    self.set_kitty_flags(param(params, 0, 0), param(params, 1, 1));
+                    return;
+                }
+                b'>' => {
+                    self.push_kitty_flags(param(params, 0, 0));
+                    return;
+                }
+                b'<' => {
+                    self.pop_kitty_flags(param(params, 0, 1).max(1) as usize);
+                    return;
+                }
+                b'?' => {
+                    self.answer_kitty_flags();
+                    return;
+                }
+                _ => {}
+            }
+        }
         if private == b'>' && final_byte == b'c' {
             self.response.extend_from_slice(b"\x1b[>0;10;1c");
             return;
