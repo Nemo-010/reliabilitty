@@ -114,33 +114,6 @@ text is drawn. That does not make GPU rendering useless in every case, but
 for a normal terminal workload the CPU path is already cheap enough that the
 extra machinery buys very little.
 
-## Ghostty and GTK4
-
-The table above uses a clean config so every terminal starts on the same
-footing. With the real config, Ghostty alone takes about 1.7 s to launch
-(measured repeatedly, matching the `bench-startup` result). The other
-terminals are unaffected because none of them use GTK4:
-
-- st uses Xlib directly.
-- Alacritty uses winit/glutin.
-- Reliabilitty uses x11rb.
-
-The cause is a GTK4 bug, not Ghostty. GTK4's `GApplication::startup` does a
-themed window-icon lookup before the window appears, which forces the whole
-icon theme to load. The cache parser is quadratic: for each of the theme's
-sub-directories it sweeps every entry in the icon cache. The active theme
-here is `Papirus-Dark`, with roughly 102 sub-directories and 297,000 cache
-entries, about 30 million inspections. GTK4 also loads the theme twice during
-startup. The main thread just waits in `futex` for the worker thread doing
-that CPU-bound parse, so there is no slow I/O to see in a syscall trace.
-
-With a clean config GTK uses a small default icon theme, so Ghostty lands at
-the ~180 ms GTK4 floor. The 1.7 s result comes from loading `Papirus-Dark`,
-not from the shell or the number of config files.
-
-See [GTK4-slow-launch-speed-test](https://github.com/Samueru-sama/GTK4-slow-launch-speed-test)
-for the full investigation and a minimal GTK3/GTK4 reproduction.
-
 ## vtebench
 
 [vtebench](https://github.com/alacritty/vtebench) measures how long a child
@@ -169,3 +142,18 @@ benchmark). Values are mean milliseconds; lower is better.
 The GPU terminals lead on pure PTY read throughput. Reliabilitty is about 2x
 faster than st overall and well ahead on the cell and unicode workloads, but
 VTE is faster on several of the line-scrolling benchmarks.
+
+## Ghostty and GTK4
+
+The tables above use a clean config so every terminal starts on the same
+footing. With the real config, Ghostty alone takes about 1.7 s to launch
+versus ~180 ms clean; the others do not use GTK4 (st: Xlib, Alacritty:
+winit/glutin, Reliabilitty: x11rb, xfce4-terminal: GTK3) and are unaffected.
+
+The cause is a GTK4 bug, not Ghostty: `GApplication::startup` does a themed
+window-icon lookup that loads the whole icon theme, and its cache parser is
+quadratic. The active theme, `Papirus-Dark`, has roughly 102 sub-directories
+and 297,000 cache entries, so startup does about 30 million inspections and
+loads the theme twice. See
+[GTK4-slow-launch-speed-test](https://github.com/Samueru-sama/GTK4-slow-launch-speed-test)
+for the investigation and a minimal reproduction.
