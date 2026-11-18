@@ -347,7 +347,6 @@ pub struct Terminal {
     clipboard_writes: Vec<ClipboardWrite>,
     clipboard_read: Option<u8>,
     scroll_offset: usize,
-    blank_lines: Vec<Line>,
     dirty: Vec<bool>,
     dirty_all: bool,
     pending_scroll: i32,
@@ -423,7 +422,6 @@ impl Terminal {
             clipboard_writes: Vec::new(),
             clipboard_read: None,
             scroll_offset: 0,
-            blank_lines: Vec::new(),
             dirty: vec![false; rows],
             dirty_all: true,
             pending_scroll: 0,
@@ -1284,23 +1282,14 @@ impl Terminal {
         }
     }
 
-    fn new_line(&mut self) -> Line {
+    fn next_line_id(&mut self) -> u64 {
         let id = self.line_id_next;
         self.line_id_next = self.line_id_next.wrapping_add(1);
-        let cells = if let Some(mut line) = self.blank_lines.pop() {
-            line.cells.resize(self.cols, Cell::blank());
-            line.cells
-        } else {
-            vec![Cell::blank(); self.cols]
-        };
-        Line::new(id, cells)
+        id
     }
 
-    fn recycle_line(&mut self, mut line: Line) {
-        line.clear_written();
-        if self.blank_lines.len() < 64 {
-            self.blank_lines.push(line);
-        }
+    fn new_line(&mut self) -> Line {
+        Line::new(self.next_line_id(), vec![Cell::blank(); self.cols])
     }
 
     fn reset_tabs(&mut self) {
@@ -1741,20 +1730,26 @@ impl Terminal {
             self.normalize_region();
             for _ in 0..count {
                 let removed = self.main.pop_front().unwrap_or_else(|| self.new_line());
+                let mut replacement = None;
                 if self.history != 0 {
                     self.scrollback.push_back(removed);
                     while self.scrollback.len() > self.history {
-                        if let Some(evicted) = self.scrollback.pop_front() {
-                            self.recycle_line(evicted);
+                        if let Some(mut evicted) = self.scrollback.pop_front() {
+                            let id = self.next_line_id();
+                            blank_in_place(&mut evicted, id);
+                            replacement = Some(evicted);
                         }
                     }
                     if self.scroll_offset > 0 {
                         self.scroll_offset = (self.scroll_offset + 1).min(self.scrollback.len());
                     }
                 } else {
-                    self.recycle_line(removed);
+                    let mut blank = removed;
+                    let id = self.next_line_id();
+                    blank_in_place(&mut blank, id);
+                    replacement = Some(blank);
                 }
-                let line = self.new_line();
+                let line = replacement.unwrap_or_else(|| self.new_line());
                 self.main.push_back(line);
             }
         } else {
@@ -1765,9 +1760,8 @@ impl Terminal {
             let offset = self.region_offset;
             for step in 0..count {
                 let slot = top + (offset + step) % len;
-                let blank = self.new_line();
-                let old = std::mem::replace(&mut self.lines_mut()[slot], blank);
-                self.recycle_line(old);
+                let id = self.next_line_id();
+                blank_in_place(&mut self.lines_mut()[slot], id);
             }
             self.region_offset = (offset + count) % len;
         }
@@ -1794,12 +1788,12 @@ impl Terminal {
         if full {
             self.normalize_region();
             for _ in 0..count {
-                let removed = self
+                let mut line = self
                     .lines_mut()
                     .pop_back()
                     .unwrap_or_else(|| self.new_line());
-                self.recycle_line(removed);
-                let line = self.new_line();
+                let id = self.next_line_id();
+                blank_in_place(&mut line, id);
                 self.lines_mut().push_front(line);
             }
         } else {
@@ -1808,9 +1802,8 @@ impl Terminal {
             for _ in 0..count {
                 offset = if offset == 0 { len - 1 } else { offset - 1 };
                 let slot = top + offset;
-                let blank = self.new_line();
-                let old = std::mem::replace(&mut self.lines_mut()[slot], blank);
-                self.recycle_line(old);
+                let id = self.next_line_id();
+                blank_in_place(&mut self.lines_mut()[slot], id);
             }
             self.region_offset = offset;
         }
@@ -2114,6 +2107,13 @@ impl Terminal {
         self.last_printed = None;
         self.mark_all();
     }
+}
+
+/// Turns a recycled line into a fresh blank one without allocating cells.
+fn blank_in_place(line: &mut Line, id: u64) {
+    line.clear_written();
+    line.wrapped = false;
+    line.id = id;
 }
 
 /// Clears a wide glyph or continuation cell before overwriting it.
