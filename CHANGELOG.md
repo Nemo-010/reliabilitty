@@ -1,4 +1,10 @@
 
+## [0.1.7](https://github.com/pkgforge-apps/reliabilitty/compare/v0.1.6...v0.1.7) - 2026-11-18
+
+### Bug Fixes
+
+- Satisfy CI clippy lints in deque scroll code - ([1d6a701](https://github.com/pkgforge-apps/reliabilitty/commit/1d6a701c003ad8b34ebacb1da4f648968aa5c17d))
+
 ## [0.1.6](https://github.com/pkgforge-apps/reliabilitty/compare/v0.1.5...v0.1.6) - 2026-11-18
 
 ### Performance
