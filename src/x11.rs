@@ -174,6 +174,8 @@ struct Keymap {
     min_keycode: u8,
     keysyms_per_keycode: u8,
     keysyms: Vec<u32>,
+    /// Modifier bit for NumLock, which selects the digit level of keypad keys.
+    numlock_mask: u16,
 }
 
 impl Keymap {
@@ -187,11 +189,45 @@ impl Keymap {
             .map_err(|error| error.to_string())?
             .reply()
             .map_err(|error| error.to_string())?;
-        Ok(Self {
+        let mut keymap = Self {
             min_keycode,
             keysyms_per_keycode: reply.keysyms_per_keycode,
             keysyms: reply.keysyms,
-        })
+            numlock_mask: 1 << 4,
+        };
+        keymap.numlock_mask = keymap.find_numlock_mask(connection);
+        Ok(keymap)
+    }
+
+    fn find_numlock_mask(&self, connection: &RustConnection) -> u16 {
+        let Ok(cookie) = connection.get_modifier_mapping() else {
+            return self.numlock_mask;
+        };
+        let Ok(reply) = cookie.reply() else {
+            return self.numlock_mask;
+        };
+        let per = reply.keycodes.len() / 8;
+        if per == 0 {
+            return self.numlock_mask;
+        }
+        for (index, codes) in reply.keycodes.chunks(per).enumerate() {
+            if codes.iter().any(|code| {
+                *code >= self.min_keycode && self.keysym_at(*code, 0) == xkeysym::key::Num_Lock
+            }) {
+                return 1 << index;
+            }
+        }
+        self.numlock_mask
+    }
+
+    fn keysym_at(&self, keycode: u8, column: u8) -> u32 {
+        if keycode < self.min_keycode || column >= self.keysyms_per_keycode {
+            return 0;
+        }
+        let index = (keycode as usize - self.min_keycode as usize)
+            * self.keysyms_per_keycode as usize
+            + column as usize;
+        self.keysyms.get(index).copied().unwrap_or(0)
     }
 
     fn keysym(&self, keycode: u8, group: u8, shift: bool, alt_gr: bool) -> u32 {
@@ -980,6 +1016,14 @@ impl X11 {
         let mut keysym = self.keymap.keysym(keycode, group, shift, alt_gr);
         if keysym == 0 {
             keysym = self.keymap.keysym(keycode, 0, shift, false);
+        }
+        // XKB maps NumLock to the shifted level of keypad keys, but the core
+        // mapping only indexes by Shift. Resolve the digit level explicitly.
+        if flags & self.keymap.numlock_mask != 0 && Keysym::new(keysym).is_keypad_key() {
+            let digits = self.keymap.keysym(keycode, group, true, alt_gr);
+            if Keysym::new(digits).is_keypad_key() {
+                keysym = digits;
+            }
         }
         if flags & u16::from(KeyButMask::LOCK) != 0
             && let Some(ch) = Keysym::new(keysym).key_char()

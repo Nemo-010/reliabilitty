@@ -1257,6 +1257,10 @@ impl Terminal {
         }
         if shift {
             self.pending_scroll += count as i32;
+            // Rows written before the shift move up with the content. Their
+            // dirty flags have to move too, or the renderer leaves them blank.
+            self.dirty.copy_within(count.., 0);
+            self.dirty[self.rows - count..].fill(false);
             for row in (self.rows - count)..self.rows {
                 self.mark_row(row);
             }
@@ -1277,6 +1281,8 @@ impl Terminal {
         }
         if shift {
             self.pending_scroll -= count as i32;
+            self.dirty.copy_within(..self.rows - count, count);
+            self.dirty[..count].fill(false);
             for row in 0..count {
                 self.mark_row(row);
             }
@@ -1714,6 +1720,18 @@ mod tests {
         feed(&mut terminal, b"a\r\nb\r\nc");
         assert_eq!(terminal.scrollback_len(), 1);
         assert_eq!(terminal.lines()[0].cells[0].ch, 'b');
+    }
+
+    #[test]
+    fn whole_screen_scroll_keeps_dirty_rows_with_their_content() {
+        let mut terminal = terminal(3);
+        feed(&mut terminal, b"\x1b[?1049ha\r\nb\r\nc");
+        let _ = terminal.take_damage();
+        // A pager writes one line at the bottom then scrolls, all in one frame.
+        feed(&mut terminal, b"d\r\ne\r\nf\r\ng");
+        let damage = terminal.take_damage();
+        assert_eq!(damage.scroll, 3);
+        assert!(damage.rows.iter().all(|dirty| *dirty), "{:?}", damage.rows);
     }
 
     #[test]

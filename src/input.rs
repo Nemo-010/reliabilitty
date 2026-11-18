@@ -504,8 +504,22 @@ fn special_key(key: Keysym, mods: Mods, app_cursor: bool, app_keypad: bool) -> O
             if let Some(final_byte) = final_byte {
                 return Some(format!("\x1bO{final_byte}").into_bytes());
             }
-        } else if raw == key::KP_Enter {
-            return Some(vec![0x0d]);
+        } else {
+            return match raw {
+                key::KP_Enter => Some(vec![0x0d]),
+                key::KP_Home => Some(cursor('H')),
+                key::KP_Up => Some(cursor('A')),
+                key::KP_Prior => Some(tilde(5)),
+                key::KP_Left => Some(cursor('D')),
+                key::KP_Begin => Some(cursor('E')),
+                key::KP_Right => Some(cursor('C')),
+                key::KP_End => Some(cursor('F')),
+                key::KP_Down => Some(cursor('B')),
+                key::KP_Next => Some(tilde(6)),
+                key::KP_Insert => Some(tilde(2)),
+                key::KP_Delete => Some(tilde(3)),
+                _ => None,
+            };
         }
     }
 
@@ -545,6 +559,27 @@ mod tests {
         assert_eq!(normalize_key("PageUp"), "pageup");
         assert_eq!(normalize_key("Esc"), "escape");
         assert_eq!(normalize_key("V"), "v");
+    }
+
+    #[test]
+    fn keypad_digits_and_navigation() {
+        let mut composer = Composer::default();
+        assert_eq!(
+            encode_key(key::KP_1, Mods::default(), false, false, &mut composer).unwrap(),
+            b"1"
+        );
+        assert_eq!(
+            encode_key(key::KP_1, Mods::default(), false, true, &mut composer).unwrap(),
+            b"\x1bOq"
+        );
+        assert_eq!(
+            encode_key(key::KP_Add, Mods::default(), false, false, &mut composer).unwrap(),
+            b"+"
+        );
+        assert_eq!(
+            encode_key(key::KP_End, Mods::default(), false, false, &mut composer).unwrap(),
+            b"\x1b[F"
+        );
     }
 
     #[test]
