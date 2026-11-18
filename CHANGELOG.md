@@ -1,4 +1,15 @@
 
+## [0.1.9](https://github.com/pkgforge-apps/reliabilitty/compare/v0.1.8...v0.1.9) - 2026-11-18
+
+### Features
+
+- Add context menu and scrollback search ([#19](https://github.com/pkgforge-apps/reliabilitty/pull/19)) - ([a1e540b](https://github.com/pkgforge-apps/reliabilitty/commit/a1e540b9e61430781075683b4a2f6b3c5a66d798))
+
+### Documentation
+
+- Split search and Vi mode into separate feature rows - ([09bfbf7](https://github.com/pkgforge-apps/reliabilitty/commit/09bfbf71e130eb687017bfa6da919da22ee01d70))
+- Refresh benchmarks with six terminals on v0.1.8 ([#10](https://github.com/pkgforge-apps/reliabilitty/pull/10)) - ([879b392](https://github.com/pkgforge-apps/reliabilitty/commit/879b392c0f767fcc51bc4f2a39003530c2ac5ba4))
+
 ## [0.1.8](https://github.com/pkgforge-apps/reliabilitty/compare/v0.1.7...v0.1.8) - 2026-11-18
 
 ### Performance
