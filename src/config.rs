@@ -126,6 +126,9 @@ fn default_fallbacks() -> Vec<String> {
         "Liberation Serif",
         "Adwaita Sans",
         "DejaVu Sans",
+        "Noto Sans Math",
+        "Adwaita Mono",
+        "FreeMono",
         "FreeSerif",
     ]
     .into_iter()

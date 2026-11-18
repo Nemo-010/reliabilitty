@@ -138,6 +138,16 @@ impl Line {
         self.revision = self.revision.wrapping_add(1);
     }
 
+    fn mark_written_range(&mut self, from: usize, to: usize) {
+        if from < self.written_min {
+            self.written_min = from;
+        }
+        if to > self.written_max {
+            self.written_max = to;
+        }
+        self.revision = self.revision.wrapping_add(1);
+    }
+
     fn mark_all_written(&mut self) {
         self.written_min = 0;
         self.written_max = self.cells.len().saturating_sub(1);
@@ -1347,21 +1357,43 @@ impl Terminal {
             width: width as u8,
         };
         let line = self.line_mut(y);
-        clear_wide_in(line, x, cols);
-        if width == 2 {
-            clear_wide_in(line, x + 1, cols);
+        // Only neighbours outside the cells we overwrite need cleaning up.
+        let old = line.cells[x];
+        let old_next = line.cells.get(x + 1).copied();
+        if old.width == 0 && x > 0 && line.cells[x - 1].width == 2 {
+            let previous = line.cells[x - 1];
+            line.cells[x - 1] = Cell {
+                bg: previous.bg,
+                ..Cell::blank()
+            };
+            line.mark_written(x - 1);
         }
-        line.cells[x] = cell;
-        line.mark_written(x);
-        line.wrapped = false;
+        if width == 1 && old.width == 2 && x + 1 < cols {
+            let next = line.cells[x + 1];
+            line.cells[x + 1] = Cell {
+                bg: next.bg,
+                ..Cell::blank()
+            };
+            line.mark_written(x + 1);
+        }
         if width == 2 {
+            if old_next.is_some_and(|next| next.width == 2) && x + 2 < cols {
+                let next = line.cells[x + 2];
+                line.cells[x + 2] = Cell {
+                    bg: next.bg,
+                    ..Cell::blank()
+                };
+                line.mark_written(x + 2);
+            }
             let mut continuation = cell;
             continuation.ch = ' ';
             continuation.extra = 0;
             continuation.width = 0;
             line.cells[x + 1] = continuation;
-            line.mark_written(x + 1);
         }
+        line.cells[x] = cell;
+        line.mark_written_range(x, x + width - 1);
+        line.wrapped = false;
         self.last_printed = Some((y, x));
         self.last_graphic = ch;
         self.mark_row(y);
@@ -2116,35 +2148,6 @@ fn blank_in_place(line: &mut Line, id: u64) {
     line.id = id;
 }
 
-/// Clears a wide glyph or continuation cell before overwriting it.
-fn clear_wide_in(line: &mut Line, x: usize, cols: usize) {
-    let Some(cell) = line.cells.get(x).copied() else {
-        return;
-    };
-    if cell.width == 0 {
-        if x > 0 && line.cells[x - 1].width == 2 {
-            let previous = line.cells[x - 1];
-            line.cells[x - 1] = Cell {
-                bg: previous.bg,
-                ..Cell::blank()
-            };
-            line.mark_written(x - 1);
-        }
-        line.cells[x] = Cell {
-            bg: cell.bg,
-            ..Cell::blank()
-        };
-        line.mark_written(x);
-    } else if cell.width == 2 && x + 1 < cols {
-        let next = line.cells[x + 1];
-        line.cells[x + 1] = Cell {
-            bg: next.bg,
-            ..Cell::blank()
-        };
-        line.mark_written(x + 1);
-    }
-}
-
 /// Pads or truncates a stored line to a new width.
 fn resize_line(line: &mut Line, cols: usize) {
     line.cells.resize(cols, Cell::blank());
@@ -2370,6 +2373,19 @@ mod tests {
                 assert!(cell.is_blank(), "row {row} col {col} = {cell:?}");
             }
         }
+    }
+
+    #[test]
+    fn narrow_over_wide_clears_its_continuation() {
+        let mut terminal = terminal(5);
+        feed(&mut terminal, "\u{4e16}".as_bytes());
+        assert_eq!(terminal.lines()[0].cells[0].width, 2);
+        assert_eq!(terminal.lines()[0].cells[1].width, 0);
+        terminal.cursor.x = 0;
+        terminal.print('A');
+        assert_eq!(terminal.lines()[0].cells[0].ch, 'A');
+        assert!(terminal.lines()[0].cells[1].is_blank());
+        assert_eq!(terminal.lines()[0].cells[1].width, 1);
     }
 
     #[test]

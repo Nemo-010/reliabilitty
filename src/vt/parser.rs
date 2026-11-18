@@ -133,6 +133,22 @@ impl Parser {
                     continue;
                 }
                 index = start;
+                let b = bytes[index];
+                if (0xc2..=0xf4).contains(&b) {
+                    let len = match b {
+                        0xc2..=0xdf => 2,
+                        0xe0..=0xef => 3,
+                        _ => 4,
+                    };
+                    if index + len <= bytes.len()
+                        && let Ok(text) = std::str::from_utf8(&bytes[index..index + len])
+                        && let Some(ch) = text.chars().next()
+                    {
+                        terminal.print(ch);
+                        index += len;
+                        continue;
+                    }
+                }
             }
             self.byte(bytes[index], terminal);
             index += 1;
@@ -460,5 +476,53 @@ impl Parser {
 
     fn sos_esc(&mut self, byte: u8, terminal: &mut Terminal) {
         self.string_escape(byte, terminal, StringKind::Ignore, State::Sos);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::theme::Theme;
+    use crate::vt::{CursorStyle, Terminal};
+
+    fn terminal() -> Terminal {
+        Terminal::new(
+            20,
+            4,
+            100,
+            Theme::from_config(&crate::config::ColorsConfig::default()).unwrap(),
+            CursorStyle::Block,
+            false,
+        )
+    }
+
+    #[test]
+    fn decodes_multibyte_sequences_in_one_advance() {
+        let mut terminal = terminal();
+        let mut parser = Parser::new();
+        parser.advance("a\u{4e16}\u{1f600}".as_bytes(), &mut terminal);
+        assert_eq!(terminal.lines()[0].cells[0].ch, 'a');
+        assert_eq!(terminal.lines()[0].cells[1].ch, '\u{4e16}');
+        assert_eq!(terminal.lines()[0].cells[3].ch, '\u{1f600}');
+    }
+
+    #[test]
+    fn invalid_utf8_still_falls_back_to_replacement() {
+        let mut terminal = terminal();
+        let mut parser = Parser::new();
+        parser.advance(&[0x61, 0xc0, 0x62], &mut terminal);
+        assert_eq!(terminal.lines()[0].cells[0].ch, 'a');
+        assert_eq!(terminal.lines()[0].cells[1].ch, '\u{fffd}');
+        assert_eq!(terminal.lines()[0].cells[2].ch, 'b');
+    }
+
+    #[test]
+    fn sequences_split_across_advances_are_decoded() {
+        let mut terminal = terminal();
+        let mut parser = Parser::new();
+        let bytes = "\u{4e16}".as_bytes();
+        parser.advance(&bytes[..1], &mut terminal);
+        parser.advance(&bytes[1..], &mut terminal);
+        assert_eq!(terminal.lines()[0].cells[0].ch, '\u{4e16}');
     }
 }
