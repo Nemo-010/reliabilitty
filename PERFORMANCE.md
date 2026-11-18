@@ -152,19 +152,19 @@ benchmark). Values are mean milliseconds; lower is better.
 
 | Benchmark | Reliabilitty | st | xfce4-terminal | Alacritty | Ghostty |
 |---|---:|---:|---:|---:|---:|
-| cursor_motion | 16 | 52 | 23 | 12 | 9 |
-| dense_cells | 39 | 940 | 578 | 33 | 33 |
-| light_cells | 5 | 25 | 9 | 10 | 2 |
-| medium_cells | 10 | 34 | 21 | 12 | 10 |
-| scrolling | 276 | 379 | 190 | 109 | 129 |
-| scrolling_bottom_region | 219 | 385 | 194 | 111 | 120 |
-| scrolling_bottom_small_region | 226 | 345 | 213 | 112 | 119 |
-| scrolling_fullscreen | 13 | 27 | 19 | 12 | 28 |
-| scrolling_top_region | 228 | 331 | 272 | 112 | 124 |
-| scrolling_top_small_region | 376 | 341 | 219 | 112 | 120 |
-| sync_medium_cells | 10 | 36 | 20 | 13 | 10 |
-| unicode | 18 | 132 | 94 | 9 | 3 |
-| **Total** | **1438** | **3027** | **1852** | **657** | **707** |
+| cursor_motion | 16 ms | 52 ms | 23 ms | 12 ms | 9 ms |
+| dense_cells | 39 ms | 940 ms | 578 ms | 33 ms | 33 ms |
+| light_cells | 5 ms | 25 ms | 9 ms | 10 ms | 2 ms |
+| medium_cells | 10 ms | 34 ms | 21 ms | 12 ms | 10 ms |
+| scrolling | 276 ms | 379 ms | 190 ms | 109 ms | 129 ms |
+| scrolling_bottom_region | 219 ms | 385 ms | 194 ms | 111 ms | 120 ms |
+| scrolling_bottom_small_region | 226 ms | 345 ms | 213 ms | 112 ms | 119 ms |
+| scrolling_fullscreen | 13 ms | 27 ms | 19 ms | 12 ms | 28 ms |
+| scrolling_top_region | 228 ms | 331 ms | 272 ms | 112 ms | 124 ms |
+| scrolling_top_small_region | 376 ms | 341 ms | 219 ms | 112 ms | 120 ms |
+| sync_medium_cells | 10 ms | 36 ms | 20 ms | 13 ms | 10 ms |
+| unicode | 18 ms | 132 ms | 94 ms | 9 ms | 3 ms |
+| **Total** | **1438 ms** | **3027 ms** | **1852 ms** | **657 ms** | **707 ms** |
 
 The GPU terminals lead on pure PTY read throughput. Reliabilitty is close to
 st overall and well ahead of it on the cell and unicode workloads, but VTE is
