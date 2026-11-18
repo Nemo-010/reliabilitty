@@ -113,6 +113,7 @@ pub struct Line {
     /// guaranteed blank, so recycling only has to clear the range.
     written_min: usize,
     written_max: usize,
+    revision: u64,
 }
 
 impl Line {
@@ -123,6 +124,7 @@ impl Line {
             wrapped: false,
             written_min: usize::MAX,
             written_max: 0,
+            revision: 0,
         }
     }
 
@@ -133,11 +135,13 @@ impl Line {
         if col > self.written_max {
             self.written_max = col;
         }
+        self.revision = self.revision.wrapping_add(1);
     }
 
     fn mark_all_written(&mut self) {
         self.written_min = 0;
         self.written_max = self.cells.len().saturating_sub(1);
+        self.revision = self.revision.wrapping_add(1);
     }
 
     fn clear_written(&mut self) {
@@ -148,6 +152,7 @@ impl Line {
         }
         self.written_min = usize::MAX;
         self.written_max = 0;
+        self.revision = self.revision.wrapping_add(1);
     }
 }
 
@@ -214,6 +219,31 @@ pub struct Selection {
     pub start: Anchor,
     pub end: Anchor,
     pub mode: SelectionMode,
+}
+
+/// One match found by the scrollback search.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SearchMatch {
+    /// Identity of the line that holds the match.
+    pub line: u64,
+    /// First column of the match.
+    pub start: usize,
+    /// Last column of the match.
+    pub end: usize,
+}
+
+#[derive(Clone, Debug)]
+struct CachedLine {
+    revision: u64,
+    matches: Vec<SearchMatch>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct SearchState {
+    query: String,
+    matches: Vec<SearchMatch>,
+    current: usize,
+    lines: HashMap<u64, CachedLine>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -324,6 +354,7 @@ pub struct Terminal {
     wrap_pending: bool,
     last_graphic: char,
     selection: Option<Selection>,
+    search: Option<SearchState>,
     resize_request: Option<(usize, usize)>,
 }
 
@@ -398,6 +429,7 @@ impl Terminal {
             wrap_pending: false,
             last_graphic: ' ',
             selection: None,
+            search: None,
             resize_request: None,
         };
         terminal.reset_tabs();
@@ -479,6 +511,14 @@ impl Terminal {
         lines.extend(self.scrollback.iter());
         lines.extend(self.lines());
         lines
+    }
+
+    fn search_lines(&self) -> Vec<&Line> {
+        if self.in_alt() {
+            self.lines().iter().collect()
+        } else {
+            self.all_lines()
+        }
     }
 
     pub fn visible_line(&self, row: usize) -> Option<&Line> {
@@ -671,6 +711,229 @@ impl Terminal {
         if self.selection.take().is_some() {
             self.mark_all();
         }
+    }
+
+    /// Replaces the search text and selects the nearest match at or below the
+    /// top of the current view, or the last match above it when none is below.
+    /// An empty query clears every highlight.
+    pub fn set_search_query(&mut self, query: &str) {
+        let lines = self.search_lines();
+        let needle = folded_query(query);
+        let mut cache = HashMap::with_capacity(lines.len());
+        let mut indexed = Vec::new();
+        for (index, line) in lines.iter().enumerate() {
+            let line_matches = self.scan_line(line, &needle);
+            for item in &line_matches {
+                indexed.push((index, *item));
+            }
+            cache.insert(
+                line.id,
+                CachedLine {
+                    revision: line.revision,
+                    matches: line_matches,
+                },
+            );
+        }
+        let top = self
+            .visible_line(0)
+            .and_then(|line| lines.iter().position(|item| item.id == line.id))
+            .unwrap_or(0);
+        let current = indexed
+            .iter()
+            .position(|(index, _)| *index >= top)
+            .or_else(|| indexed.iter().rposition(|(index, _)| *index < top))
+            .unwrap_or(0);
+        self.search = Some(SearchState {
+            query: query.to_string(),
+            matches: indexed.into_iter().map(|(_, item)| item).collect(),
+            current,
+            lines: cache,
+        });
+        self.reveal_search_match();
+        self.mark_all();
+    }
+
+    /// Recomputes matches after the screen changed, keeping the current match
+    /// when it is still present. Only lines whose content changed are scanned.
+    pub fn refresh_search(&mut self, query: &str) {
+        if self
+            .search
+            .as_ref()
+            .is_some_and(|state| state.query != query)
+        {
+            self.set_search_query(query);
+            return;
+        }
+        let Some(state) = self.search.take() else {
+            return;
+        };
+        let lines = self.search_lines();
+        let needle = folded_query(query);
+        let mut old_cache = state.lines;
+        let mut cache = HashMap::with_capacity(lines.len());
+        let mut matches = Vec::new();
+        for line in &lines {
+            let line_matches = match old_cache.remove(&line.id) {
+                Some(cached) if cached.revision == line.revision => cached.matches,
+                _ => self.scan_line(line, &needle),
+            };
+            matches.extend(line_matches.iter().copied());
+            cache.insert(
+                line.id,
+                CachedLine {
+                    revision: line.revision,
+                    matches: line_matches,
+                },
+            );
+        }
+        let previous = state.matches.get(state.current).copied();
+        let changed = matches != state.matches;
+        let current = previous
+            .and_then(|previous| matches.iter().position(|item| *item == previous))
+            .unwrap_or_else(|| state.current.min(matches.len().saturating_sub(1)));
+        self.search = Some(SearchState {
+            query: state.query,
+            matches,
+            current,
+            lines: cache,
+        });
+        if changed {
+            self.mark_all();
+        }
+    }
+
+    /// Scrolls the current search match into view.
+    pub fn reveal_search(&mut self) {
+        self.reveal_search_match();
+    }
+
+    /// Removes the search state and its highlights.
+    pub fn clear_search(&mut self) {
+        if self.search.take().is_some() {
+            self.mark_all();
+        }
+    }
+
+    /// Moves to the next or previous match, wrapping around at the ends.
+    pub fn search_step(&mut self, forward: bool) -> bool {
+        let Some(state) = &mut self.search else {
+            return false;
+        };
+        if state.matches.is_empty() {
+            return false;
+        }
+        let count = state.matches.len();
+        state.current = if forward {
+            (state.current + 1) % count
+        } else {
+            (state.current + count - 1) % count
+        };
+        self.mark_all();
+        self.reveal_search_match();
+        true
+    }
+
+    /// Returns one-based current and total match numbers, or zero when empty.
+    pub fn search_summary(&self) -> (usize, usize) {
+        match &self.search {
+            Some(state) if !state.matches.is_empty() => (state.current + 1, state.matches.len()),
+            _ => (0, 0),
+        }
+    }
+
+    /// Matches currently highlighted on the screen.
+    pub fn search_matches(&self) -> &[SearchMatch] {
+        self.search
+            .as_ref()
+            .map(|state| state.matches.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// Index of the current match within [`Self::search_matches`].
+    pub fn search_current(&self) -> Option<usize> {
+        self.search
+            .as_ref()
+            .filter(|state| !state.matches.is_empty())
+            .map(|state| state.current)
+    }
+
+    fn scan_line(&self, line: &Line, needle: &[char]) -> Vec<SearchMatch> {
+        let mut matches = Vec::new();
+        if needle.is_empty() {
+            return matches;
+        }
+        let (folded, columns) = self.folded_line(line);
+        let mut offset = 0;
+        while offset + needle.len() <= folded.len() {
+            if folded[offset..].starts_with(needle) {
+                matches.push(SearchMatch {
+                    line: line.id,
+                    start: columns[offset],
+                    end: columns[offset + needle.len() - 1],
+                });
+                offset += needle.len();
+            } else {
+                offset += 1;
+            }
+        }
+        matches
+    }
+
+    fn folded_line(&self, line: &Line) -> (Vec<char>, Vec<usize>) {
+        let end = line
+            .cells
+            .iter()
+            .rposition(|cell| cell.width != 0 && (cell.ch != ' ' || cell.extra != 0))
+            .map_or(0, |index| index + 1);
+        let mut chars = Vec::with_capacity(end);
+        let mut columns = Vec::with_capacity(end);
+        for (column, cell) in line.cells[..end].iter().enumerate() {
+            if cell.width == 0 {
+                continue;
+            }
+            chars.push(fold_search_char(cell.ch));
+            columns.push(column);
+            if cell.extra != 0
+                && let Some(extra) = self.extras.get(cell.extra as usize - 1)
+            {
+                for ch in extra.chars() {
+                    chars.push(fold_search_char(ch));
+                    columns.push(column);
+                }
+            }
+        }
+        (chars, columns)
+    }
+
+    fn reveal_search_match(&mut self) {
+        let Some(current) = self
+            .search
+            .as_ref()
+            .and_then(|state| state.matches.get(state.current).copied())
+        else {
+            return;
+        };
+        if self.in_alt() {
+            self.scroll_offset = 0;
+            self.mark_all();
+            return;
+        }
+        let Some(index) = self
+            .all_lines()
+            .iter()
+            .position(|line| line.id == current.line)
+        else {
+            return;
+        };
+        let saved = self.scrollback.len();
+        let target = self.rows.saturating_sub(1) / 3;
+        let offset = if index < saved {
+            (saved - index + target).min(saved)
+        } else {
+            0
+        };
+        self.scroll_offset = offset;
+        self.mark_all();
     }
 
     fn word_bounds(&self, anchor: Anchor) -> (Anchor, Anchor) {
@@ -1774,6 +2037,11 @@ impl Terminal {
         self.theme = self.default_theme.clone();
         self.reset_tabs();
         self.selection = None;
+        if let Some(search) = &mut self.search {
+            search.matches.clear();
+            search.current = 0;
+            search.lines.clear();
+        }
         self.dirty = vec![false; self.rows];
         self.dirty_all = true;
         self.wrap_pending = false;
@@ -1824,6 +2092,17 @@ fn is_word_char(ch: char) -> bool {
             ch,
             '_' | '-' | '.' | '/' | '~' | ':' | '@' | '+' | '%' | '#' | '?' | '=' | '&'
         )
+}
+
+fn folded_query(query: &str) -> Vec<char> {
+    query.chars().map(fold_search_char).collect()
+}
+
+/// Folds one character for case-insensitive search. This is single-character
+/// lowercasing, so multi-character folds such as the German sharp s are not
+/// treated as equal.
+fn fold_search_char(ch: char) -> char {
+    ch.to_lowercase().next().unwrap_or(ch)
 }
 
 /// Appends a coordinate as a UTF-8 code point for 1005 mouse reports.
@@ -2081,6 +2360,99 @@ mod tests {
         assert_eq!(terminal.lines()[0].cells[0].ch, '\u{250c}');
         assert_eq!(terminal.lines()[0].cells[1].ch, '\u{2500}');
         assert_eq!(terminal.lines()[0].cells[2].ch, '\u{2510}');
+    }
+
+    #[test]
+    fn search_is_case_insensitive_and_steps_through_matches() {
+        let mut terminal = terminal(3);
+        feed(&mut terminal, b"Alpha beta ALPHA\r\nbeta alpha");
+        terminal.set_search_query("alpha");
+        let matches = terminal.search_matches();
+        assert_eq!(matches.len(), 3);
+        assert_eq!((matches[0].start, matches[0].end), (0, 4));
+        assert_eq!((matches[1].start, matches[1].end), (11, 15));
+        assert_eq!(terminal.search_summary(), (1, 3));
+        assert!(terminal.search_step(true));
+        assert_eq!(terminal.search_summary(), (2, 3));
+        assert!(terminal.search_step(true));
+        assert_eq!(terminal.search_summary(), (3, 3));
+        assert!(terminal.search_step(true));
+        assert_eq!(terminal.search_summary(), (1, 3));
+        assert!(terminal.search_step(false));
+        assert_eq!(terminal.search_summary(), (3, 3));
+        let current = terminal.search_matches()[2];
+        terminal.refresh_search("alpha");
+        assert_eq!(terminal.search_summary(), (3, 3));
+        assert_eq!(terminal.search_matches()[2], current);
+    }
+
+    #[test]
+    fn search_starts_at_the_last_match_above_the_view() {
+        let mut terminal = terminal(2);
+        feed(
+            &mut terminal,
+            b"needle one\r\na\r\nb\r\nc\r\nd\r\nneedle two\r\ne\r\nf\r\ng",
+        );
+        terminal.set_search_query("needle");
+        assert_eq!(terminal.search_matches().len(), 2);
+        assert_eq!(terminal.search_summary(), (2, 2));
+    }
+
+    #[test]
+    fn search_refresh_picks_up_changed_lines() {
+        let mut terminal = terminal(2);
+        feed(&mut terminal, b"alpha");
+        terminal.set_search_query("alpha");
+        assert_eq!(terminal.search_summary(), (1, 1));
+        feed(&mut terminal, b"\rBETA");
+        terminal.refresh_search("alpha");
+        assert!(terminal.search_matches().is_empty());
+        feed(&mut terminal, b"\rALPHA");
+        terminal.refresh_search("alpha");
+        assert_eq!(terminal.search_summary(), (1, 1));
+    }
+
+    #[test]
+    fn search_ignores_trailing_line_padding() {
+        let mut terminal = terminal(2);
+        feed(&mut terminal, b"a");
+        terminal.set_search_query(" ");
+        assert!(terminal.search_matches().is_empty());
+    }
+
+    #[test]
+    fn search_reveals_matches_in_scrollback() {
+        let mut terminal = terminal(2);
+        feed(&mut terminal, b"one\r\ntwo\r\nneedle\r\nfour\r\nfive");
+        terminal.set_search_query("needle");
+        let found = terminal.search_matches()[0];
+        assert_eq!(
+            terminal.visible_line(0).map(|line| line.id),
+            Some(found.line)
+        );
+    }
+
+    #[test]
+    fn search_ignores_hidden_scrollback_on_alternate_screen() {
+        let mut terminal = terminal(2);
+        feed(&mut terminal, b"one\r\ntwo\r\nthree");
+        feed(&mut terminal, b"\x1b[?1049hALT");
+        terminal.set_search_query("one");
+        assert!(terminal.search_matches().is_empty());
+        terminal.set_search_query("ALT");
+        assert_eq!(terminal.search_summary(), (1, 1));
+        assert_eq!(terminal.scroll_offset(), 0);
+    }
+
+    #[test]
+    fn clearing_search_drops_highlights() {
+        let mut terminal = terminal(3);
+        feed(&mut terminal, b"find me");
+        terminal.set_search_query("find");
+        assert_eq!(terminal.search_summary(), (1, 1));
+        terminal.clear_search();
+        assert_eq!(terminal.search_summary(), (0, 0));
+        assert!(terminal.search_matches().is_empty());
     }
 
     #[test]

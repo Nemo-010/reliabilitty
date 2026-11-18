@@ -37,6 +37,11 @@ This is an early release. The following are implemented and exercised:
 - Mouse reporting (X10, 1000, 1002, 1003, SGR, urxvt and UTF-8 encodings).
 - Selection with double-click words and triple-click lines, PRIMARY and
   CLIPBOARD copy, middle-click paste, bracketed paste and OSC 52.
+- A right-click menu with copy, paste, select all and search. Applications
+  that request mouse input keep the right button, so use Shift+right-click
+  for the menu there.
+- Scrollback search with case-insensitive highlighting, Ctrl+Shift+F and
+  Enter to step through matches.
 - OSC titles, palette changes, default colour changes and terminal responses.
 - Shell-style configuration with live reload and environment overrides.
 - Software rendering through SHM with a `PutImage` fallback.
@@ -137,6 +142,7 @@ See [`rtty.example.conf`](rtty.example.conf) for every option.
 | `Ctrl+Shift+V` | Paste CLIPBOARD |
 | `Shift+Insert` | Paste CLIPBOARD |
 | `Ctrl+Insert` | Copy |
+| `Ctrl+Shift+F` | Search the scrollback |
 | `Shift+PageUp` / `Shift+PageDown` | Scroll one page |
 | `Ctrl+Shift+Home` / `Ctrl+Shift+End` | Oldest line / live screen |
 | `Ctrl+Shift+Up` / `Ctrl+Shift+Down` | Scroll one line |
@@ -147,6 +153,13 @@ See [`rtty.example.conf`](rtty.example.conf) for every option.
 | `Shift` + click | Select even when the application requested mouse input |
 | Middle click | Paste PRIMARY |
 | Double click / triple click | Select word / line |
+
+While the search bar is open, typing edits the query, Enter and Shift+Enter
+move to the next and previous match, and Escape closes it. Search highlights
+use `SEARCH_MATCH_BACKGROUND` and `SEARCH_CURRENT_BACKGROUND`, with text
+contrast chosen automatically. Ctrl+F is left to the shell and full-screen
+applications; bind it to `search` in the config to use it for the search bar
+instead.
 
 Any `BINDING` lines in the config replace the built-in list completely.
 

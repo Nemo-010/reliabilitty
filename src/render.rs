@@ -11,7 +11,7 @@ use unicode_width::UnicodeWidthChar;
 
 use crate::config::{FontConfig, FontDescription};
 use crate::scrollbar;
-use crate::theme::Rgb;
+use crate::theme::{Rgb, Theme};
 use crate::vt::{Attrs, Cell, Color, Terminal};
 
 /// A 32-bit pixel buffer. Opaque canvases use `0x00RRGGBB`; ARGB canvases
@@ -389,6 +389,12 @@ impl Renderer {
         self.cell_height
     }
 
+    /// Draws a single line of text with the regular font. Used for overlays
+    /// such as the search bar and the context menu.
+    pub fn draw_label(&mut self, canvas: &mut Canvas, text: &str, x: i32, y: i32, color: Rgb) {
+        self.draw_text_str(canvas, text, x, y, color, 0);
+    }
+
     /// Marks the configured primary family as already loaded, so fallback does
     /// not duplicate it.
     fn remember_primary_families(&mut self, config: &FontConfig) {
@@ -431,6 +437,8 @@ impl Renderer {
         let cell_h = self.cell_height as i32;
         let rows = terminal.height();
         let has_selection = terminal.has_selection();
+        let search = terminal.search_matches();
+        let search_current = terminal.search_current();
         for row in 0..rows {
             if !damage.all && !damage.rows.get(row).copied().unwrap_or(false) {
                 continue;
@@ -438,6 +446,12 @@ impl Renderer {
             let Some(line) = terminal.visible_line(row) else {
                 continue;
             };
+            let highlights: Vec<(usize, usize, bool)> = search
+                .iter()
+                .enumerate()
+                .filter(|(_, item)| item.line == line.id)
+                .map(|(index, item)| (item.start, item.end, Some(index) == search_current))
+                .collect();
             let y0 = origin_y + row as i32 * cell_h;
             canvas.fill_rect(
                 origin_x,
@@ -454,6 +468,10 @@ impl Renderer {
                     continue;
                 }
                 let selected = has_selection && terminal.is_selected(line.id, col);
+                let highlight = highlights
+                    .iter()
+                    .find(|(start, end, _)| col >= *start && col <= *end)
+                    .map(|(_, _, current)| *current);
                 self.draw_cell(
                     canvas,
                     terminal,
@@ -461,6 +479,7 @@ impl Renderer {
                     origin_x + col as i32 * cell_w,
                     y0,
                     selected,
+                    highlight,
                     background_alpha,
                 );
             }
@@ -539,6 +558,7 @@ impl Renderer {
         x: i32,
         y: i32,
         selected: bool,
+        highlight: Option<bool>,
         background_alpha: u8,
     ) {
         let theme = terminal.theme();
@@ -549,6 +569,10 @@ impl Renderer {
             fg = theme.selection_foreground;
             bg = theme.selection_background;
         }
+        if let Some(current) = highlight {
+            bg = search_background(theme, current);
+            fg = readable_on(bg);
+        }
         let attrs = cell.attrs;
         if attrs.contains(Attrs::REVERSE) {
             std::mem::swap(&mut fg, &mut bg);
@@ -557,7 +581,10 @@ impl Renderer {
             fg = bg;
         }
         let background = if canvas.argb {
-            let alpha = if cell.bg == Color::Default && !selected && !attrs.contains(Attrs::REVERSE)
+            let alpha = if cell.bg == Color::Default
+                && !selected
+                && highlight.is_none()
+                && !attrs.contains(Attrs::REVERSE)
             {
                 background_alpha
             } else {
@@ -981,6 +1008,23 @@ fn missing_glyph(canvas: &mut Canvas, x: i32, y: i32, width: i32, height: i32, c
     canvas.fill_rect(right - 1, top, 1, bottom - top, color);
 }
 
+fn search_background(theme: &Theme, current: bool) -> Rgb {
+    if current {
+        theme.search_current_background
+    } else {
+        theme.search_match_background
+    }
+}
+
+fn readable_on(color: Rgb) -> Rgb {
+    let luminance = (299 * color[0] as u32 + 587 * color[1] as u32 + 114 * color[2] as u32) / 1000;
+    if luminance > 140 {
+        [0, 0, 0]
+    } else {
+        [255, 255, 255]
+    }
+}
+
 fn outline(canvas: &mut Canvas, x: i32, y: i32, width: i32, height: i32, color: u32) {
     canvas.fill_rect(x, y, width, 1, color);
     canvas.fill_rect(x, y + height - 1, width, 1, color);
@@ -1043,6 +1087,35 @@ mod tests {
         });
         let desc = FontDescription::default();
         assert!(query_face(&database, &desc, Weight::NORMAL, Style::Normal).is_some());
+    }
+
+    #[test]
+    fn search_highlights_use_a_readable_foreground() {
+        assert_eq!(readable_on([240, 198, 116]), [0, 0, 0]);
+        assert_eq!(readable_on([16, 16, 16]), [255, 255, 255]);
+    }
+
+    #[test]
+    fn search_colours_do_not_follow_the_ansi_palette() {
+        let mut colors = crate::config::ColorsConfig::default();
+        colors.normal.yellow = Some("#000000".into());
+        colors.bright.blue = Some("#000000".into());
+        let theme = Theme::from_config(&colors).unwrap();
+        assert_eq!(search_background(&theme, false), [0xf0, 0xc6, 0x74]);
+        assert_eq!(search_background(&theme, true), [0x7a, 0xa6, 0xda]);
+    }
+
+    #[test]
+    fn current_search_match_is_distinct_from_the_others() {
+        let theme = Theme::from_config(&crate::config::ColorsConfig::default()).unwrap();
+        let current = search_background(&theme, true);
+        let other = search_background(&theme, false);
+        let distance: u32 = current
+            .iter()
+            .zip(other)
+            .map(|(left, right)| left.abs_diff(right) as u32)
+            .sum();
+        assert!(distance > 200, "{current:?} is too close to {other:?}");
     }
 
     #[test]

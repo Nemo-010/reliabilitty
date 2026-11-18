@@ -4,7 +4,9 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, Instant, SystemTime};
 
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use x11rb::connection::Connection as _;
+use xkeysym::{Keysym, key};
 
 use crate::cli::Cli;
 use crate::config::{Config, Padding};
@@ -56,6 +58,25 @@ struct Click {
     count: u8,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MenuItem {
+    Copy,
+    Paste,
+    SelectAll,
+    Search,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ContextMenu {
+    x: i16,
+    y: i16,
+    hover: Option<MenuItem>,
+}
+
+struct SearchUi {
+    query: String,
+}
+
 struct App {
     config: Config,
     config_path: Option<PathBuf>,
@@ -81,6 +102,9 @@ struct App {
     drag: Option<Drag>,
     scroll_drag: bool,
     last_click: Option<Click>,
+    context_menu: Option<ContextMenu>,
+    search: Option<SearchUi>,
+    search_stale: bool,
     auto_scroll_at: Instant,
     next_config_check: Instant,
     force_reload: bool,
@@ -243,6 +267,9 @@ pub fn run(cli: Cli) -> Result<(), String> {
         drag: None,
         scroll_drag: false,
         last_click: None,
+        context_menu: None,
+        search: None,
+        search_stale: false,
         auto_scroll_at: now,
         next_config_check: now + Duration::from_secs(2),
         force_reload: false,
@@ -286,6 +313,7 @@ impl App {
             // are replaced before they reach the screen.
             if self.read_pty() {
                 self.last_pty_input = now;
+                self.search_stale = true;
             }
             self.terminal_notifications(now);
             self.flush_input();
@@ -367,13 +395,18 @@ impl App {
                     self.composer.reset();
                     self.scroll_drag = false;
                     self.drag = None;
+                    self.close_context_menu();
                     self.x11.ungrab_pointer();
                 }
             }
             UiEvent::Close => self.quit = true,
             UiEvent::Paste(text) => {
-                self.terminal.scroll_to_bottom();
-                self.terminal.paste(&text);
+                if self.search.is_some() {
+                    self.search_push_str(&text);
+                } else {
+                    self.terminal.scroll_to_bottom();
+                    self.terminal.paste(&text);
+                }
             }
             UiEvent::Error(error) => eprintln!("rtty: {error}"),
         }
@@ -384,6 +417,16 @@ impl App {
         if keysym == 0 {
             return;
         }
+        if self.context_menu.is_some() {
+            if is_modifier_key(keysym) {
+                return;
+            }
+            if keysym == key::Escape {
+                self.close_context_menu();
+                return;
+            }
+            self.close_context_menu();
+        }
         let bound = self.bindings.find(keysym, mods).map(|binding| {
             (
                 binding.action().cloned(),
@@ -392,11 +435,19 @@ impl App {
         });
         if let Some((action, chars)) = bound {
             if let Some(chars) = chars {
-                self.terminal.scroll_to_bottom();
-                self.terminal.push_input(chars.as_bytes());
+                if self.search.is_some() {
+                    self.search_push_str(&chars);
+                } else {
+                    self.terminal.scroll_to_bottom();
+                    self.terminal.push_input(chars.as_bytes());
+                }
             } else if let Some(action) = action {
                 self.perform_action(action, time);
             }
+            return;
+        }
+        if self.search.is_some() {
+            self.handle_search_key(keysym, mods);
             return;
         }
         if let Some(bytes) = encode_key(
@@ -408,6 +459,98 @@ impl App {
         ) {
             self.terminal.scroll_to_bottom();
             self.terminal.push_input(&bytes);
+        }
+    }
+
+    fn handle_search_key(&mut self, keysym: u32, mods: Mods) {
+        if keysym == key::Escape {
+            self.close_search();
+            return;
+        }
+        if keysym == key::Return || keysym == key::KP_Enter {
+            self.terminal.search_step(!mods.shift);
+            self.redraw_all = true;
+            return;
+        }
+        if keysym == key::BackSpace {
+            if let Some(search) = &mut self.search {
+                search.query.pop();
+            }
+            self.apply_search_query();
+            return;
+        }
+        if mods.control || mods.alt || mods.super_key {
+            return;
+        }
+        if let Some(ch) = Keysym::new(keysym).key_char()
+            && !ch.is_control()
+        {
+            self.search_push(ch);
+        }
+    }
+
+    fn search_push(&mut self, ch: char) {
+        if let Some(search) = &mut self.search {
+            search.query.push(ch);
+        }
+        self.apply_search_query();
+    }
+
+    fn search_push_str(&mut self, text: &str) {
+        if let Some(search) = &mut self.search {
+            for ch in text.chars() {
+                let ch = match ch {
+                    '\r' | '\n' | '\t' => ' ',
+                    other => other,
+                };
+                if !ch.is_control() {
+                    search.query.push(ch);
+                }
+            }
+        }
+        self.apply_search_query();
+    }
+
+    fn apply_search_query(&mut self) {
+        let Some(query) = self.search.as_ref().map(|search| search.query.as_str()) else {
+            return;
+        };
+        self.terminal.set_search_query(query);
+        self.search_stale = false;
+        self.redraw_all = true;
+    }
+
+    fn refresh_active_search(&mut self) {
+        let Some(query) = self.search.as_ref().map(|search| search.query.as_str()) else {
+            return;
+        };
+        self.terminal.refresh_search(query);
+    }
+
+    fn open_search(&mut self) {
+        if self.search.is_none() {
+            self.search = Some(SearchUi {
+                query: String::new(),
+            });
+            self.terminal.set_search_query("");
+            self.search_stale = false;
+            self.redraw_all = true;
+        }
+    }
+
+    fn close_search(&mut self) {
+        if self.search.take().is_some() {
+            self.terminal.clear_search();
+            self.search_stale = false;
+            self.redraw_all = true;
+        }
+    }
+
+    fn toggle_search(&mut self) {
+        if self.search.is_some() {
+            self.close_search();
+        } else {
+            self.open_search();
         }
     }
 
@@ -442,6 +585,7 @@ impl App {
             }
             Action::ClearSelection => self.terminal.clear_selection(),
             Action::SelectAll => self.terminal.select_all(),
+            Action::Search => self.toggle_search(),
             Action::ToggleFullscreen => {
                 if let Err(error) = self.x11.toggle_fullscreen() {
                     eprintln!("rtty: fullscreen: {error}");
@@ -495,6 +639,133 @@ impl App {
         self.terminal.set_scroll_offset(offset);
     }
 
+    fn menu_entries(&self) -> [(MenuItem, &'static str, bool); 4] {
+        [
+            (MenuItem::Copy, "Copy", self.terminal.has_selection()),
+            (MenuItem::Paste, "Paste", true),
+            (MenuItem::SelectAll, "Select All", true),
+            (MenuItem::Search, "Find...", true),
+        ]
+    }
+
+    fn menu_geometry(&self, menu: &ContextMenu) -> (i32, i32, i32, i32) {
+        let entries = self.menu_entries();
+        let longest = entries
+            .iter()
+            .map(|(_, label, _)| label.chars().count())
+            .max()
+            .unwrap_or(0) as i32;
+        let cell_width = self.cell_width as i32;
+        let cell_height = self.cell_height as i32;
+        let width = ((longest + 4).max(10) * cell_width).min(self.x11.width() as i32);
+        let height = (entries.len() as i32 * cell_height + 4).min(self.x11.height() as i32);
+        let max_x = (self.x11.width() as i32 - width).max(0);
+        let max_y = (self.x11.height() as i32 - height).max(0);
+        (
+            (menu.x as i32).clamp(0, max_x),
+            (menu.y as i32).clamp(0, max_y),
+            width,
+            height,
+        )
+    }
+
+    fn menu_item_at(&self, menu: &ContextMenu, x: i16, y: i16) -> Option<MenuItem> {
+        let entries = self.menu_entries();
+        let (menu_x, menu_y, width, height) = self.menu_geometry(menu);
+        let x = x as i32;
+        let y = y as i32;
+        if x < menu_x || x >= menu_x + width || y < menu_y || y >= menu_y + height {
+            return None;
+        }
+        let relative = y - menu_y - 2;
+        let row = menu_row_at(relative, self.cell_height as i32, entries.len())?;
+        entries.get(row).map(|(item, _, _)| *item)
+    }
+
+    fn menu_item_enabled(&self, item: MenuItem) -> bool {
+        self.menu_entries()
+            .iter()
+            .any(|(entry, _, enabled)| *entry == item && *enabled)
+    }
+
+    fn open_context_menu(&mut self, x: i16, y: i16) {
+        self.context_menu = Some(ContextMenu { x, y, hover: None });
+        self.redraw_all = true;
+    }
+
+    fn close_context_menu(&mut self) {
+        if self.context_menu.take().is_some() {
+            self.redraw_all = true;
+        }
+    }
+
+    fn handle_menu_button(&mut self, button: u8, pressed: bool, x: i16, y: i16, time: u32) -> bool {
+        let Some(menu) = self.context_menu else {
+            return false;
+        };
+        if !pressed {
+            return true;
+        }
+        match button {
+            1 => {
+                let (menu_x, menu_y, width, height) = self.menu_geometry(&menu);
+                let x32 = x as i32;
+                let y32 = y as i32;
+                let inside =
+                    x32 >= menu_x && x32 < menu_x + width && y32 >= menu_y && y32 < menu_y + height;
+                let item = if inside {
+                    self.menu_item_at(&menu, x, y)
+                } else {
+                    None
+                };
+                self.close_context_menu();
+                if let Some(item) = item
+                    && self.menu_item_enabled(item)
+                {
+                    self.perform_menu_item(item, time);
+                }
+                return inside;
+            }
+            2..=5 => {
+                self.close_context_menu();
+                return false;
+            }
+            _ => self.close_context_menu(),
+        }
+        true
+    }
+
+    fn handle_menu_motion(&mut self, x: i16, y: i16) -> bool {
+        let Some(menu) = self.context_menu else {
+            return false;
+        };
+        let hover = self.menu_item_at(&menu, x, y);
+        if let Some(current) = &mut self.context_menu
+            && current.hover != hover
+        {
+            current.hover = hover;
+            self.redraw_all = true;
+        }
+        true
+    }
+
+    fn perform_menu_item(&mut self, item: MenuItem, time: u32) {
+        match item {
+            MenuItem::Copy => self.copy_selection(true),
+            MenuItem::Paste => {
+                let time = time.max(1);
+                if let Err(error) = self.x11.request_paste(false, time) {
+                    eprintln!("rtty: paste: {error}");
+                }
+            }
+            MenuItem::SelectAll => {
+                self.terminal.select_all();
+                self.redraw_all = true;
+            }
+            MenuItem::Search => self.open_search(),
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn handle_button(
         &mut self,
@@ -507,6 +778,9 @@ impl App {
         state: u16,
         now: Instant,
     ) {
+        if self.handle_menu_button(button, pressed, x, y, time) {
+            return;
+        }
         if self.scrollbar_hit(x) {
             if matches!(button, 4 | 5) {
                 if pressed {
@@ -601,7 +875,7 @@ impl App {
                     }
                 }
             }
-            3 => {}
+            3 if pressed => self.open_context_menu(x, y),
             _ => {}
         }
     }
@@ -627,6 +901,9 @@ impl App {
     }
 
     fn handle_motion(&mut self, x: i16, y: i16, mods: Mods, state: u16, now: Instant) {
+        if self.handle_menu_motion(x, y) {
+            return;
+        }
         let primary = u16::from(x11rb::protocol::xproto::KeyButMask::BUTTON1);
         let held = state & primary != 0;
         if self.scroll_drag {
@@ -991,7 +1268,116 @@ impl App {
             ));
             self.terminal.mark_all();
         }
+        if self.search.is_some() {
+            self.refresh_active_search();
+            self.terminal.reveal_search();
+            self.search_stale = false;
+        }
         self.redraw_all = true;
+    }
+
+    fn draw_overlays(&mut self) {
+        self.draw_search_bar();
+        self.draw_context_menu();
+    }
+
+    fn draw_search_bar(&mut self) {
+        let display = {
+            let Some(search) = &self.search else {
+                return;
+            };
+            let query = &search.query;
+            let (current, total) = self.terminal.search_summary();
+            let max_cells = self.terminal.width().saturating_sub(2).max(1);
+            let prefix = "Find: ";
+            let suffix = if query.is_empty() {
+                String::new()
+            } else {
+                format!("  {current}/{total}")
+            };
+            let reserved = prefix.width() + suffix.width();
+            if reserved >= max_cells {
+                tail_to_width(&format!("{prefix}{query}"), max_cells)
+            } else {
+                let available = max_cells - reserved;
+                format!("{prefix}{}{suffix}", tail_to_width(query, available))
+            }
+        };
+        let cell_width = self.cell_width as i32;
+        let cell_height = self.cell_height as i32;
+        let width = (display.width() as i32 + 2) * cell_width;
+        let height = cell_height + 4;
+        let (origin_x, origin_y) = self.origin();
+        let text_width = self.terminal.width() as i32 * cell_width;
+        let x = (origin_x + text_width - width).max(origin_x);
+        let y = origin_y;
+        let (background, foreground, border) = {
+            let theme = self.terminal.theme();
+            (
+                theme.selection_background,
+                theme.selection_foreground,
+                theme.foreground,
+            )
+        };
+        let background = pixel(&self.canvas, background, 255);
+        let border = pixel(&self.canvas, border, 255);
+        self.canvas.fill_rect(x, y, width, height, background);
+        self.canvas.fill_rect(x, y, width, 1, border);
+        self.canvas.fill_rect(x, y + height - 1, width, 1, border);
+        self.canvas.fill_rect(x, y, 1, height, border);
+        self.canvas.fill_rect(x + width - 1, y, 1, height, border);
+        self.renderer.draw_label(
+            &mut self.canvas,
+            &display,
+            x + cell_width,
+            y + 2,
+            foreground,
+        );
+    }
+
+    fn draw_context_menu(&mut self) {
+        let Some(menu) = self.context_menu else {
+            return;
+        };
+        let entries = self.menu_entries();
+        let (x, y, width, height) = self.menu_geometry(&menu);
+        let cell_width = self.cell_width as i32;
+        let cell_height = self.cell_height as i32;
+        let (background, foreground, dim, selection_background, selection_foreground) = {
+            let theme = self.terminal.theme();
+            (
+                theme.background,
+                theme.foreground,
+                theme.dim_foreground,
+                theme.selection_background,
+                theme.selection_foreground,
+            )
+        };
+        let background = pixel(&self.canvas, background, 255);
+        let border = pixel(&self.canvas, dim, 255);
+        let hover = pixel(&self.canvas, selection_background, 255);
+        self.canvas.fill_rect(x, y, width, height, background);
+        for (index, (item, label, enabled)) in entries.iter().enumerate() {
+            let row_y = y + 2 + index as i32 * cell_height;
+            let hovered = menu.hover == Some(*item);
+            if hovered {
+                self.canvas
+                    .fill_rect(x + 1, row_y, width - 2, cell_height, hover);
+            }
+            let color = if !enabled {
+                dim
+            } else if hovered {
+                selection_foreground
+            } else {
+                foreground
+            };
+            self.renderer
+                .draw_label(&mut self.canvas, label, x + cell_width, row_y, color);
+        }
+        self.canvas.fill_rect(x, y, width, 1, border);
+        self.canvas.fill_rect(x, y + height - 1, width, 1, border);
+        self.canvas.fill_rect(x, y, 1, height, border);
+        self.canvas.fill_rect(x + width - 1, y, 1, height, border);
     }
 
     fn cursor_damage(&mut self) {
@@ -1006,6 +1392,10 @@ impl App {
     }
 
     fn render(&mut self, now: Instant) {
+        if self.search.is_some() && self.search_stale {
+            self.search_stale = false;
+            self.refresh_active_search();
+        }
         let mut damage = self.terminal.take_damage();
         if self.redraw_all {
             damage.all = true;
@@ -1025,6 +1415,12 @@ impl App {
             true
         };
         let (origin_x, origin_y) = self.origin();
+        // An overlay stays in place while the terminal scrolls, so the canvas
+        // shift would leave a stale copy behind. Redraw everything instead.
+        if damage.scroll != 0 && (self.search.is_some() || self.context_menu.is_some()) {
+            damage.all = true;
+            damage.rows = vec![true; self.terminal.height()];
+        }
         // A whole-screen scroll only moves pixels. Shift the canvas once and
         // let the newly exposed rows be redrawn, instead of rasterizing every
         // cell. Presentation still needs the whole canvas since it all moved.
@@ -1053,6 +1449,7 @@ impl App {
                 *pixel ^= 0x00ff_ffff;
             }
         }
+        self.draw_overlays();
         let mut present_damage = damage;
         if scroll != 0 {
             present_damage.all = true;
@@ -1132,6 +1529,51 @@ impl App {
     }
 }
 
+fn menu_row_at(relative_y: i32, cell_height: i32, rows: usize) -> Option<usize> {
+    if relative_y < 0 || cell_height <= 0 {
+        return None;
+    }
+    let row = (relative_y / cell_height) as usize;
+    (row < rows).then_some(row)
+}
+
+fn tail_to_width(text: &str, max: usize) -> String {
+    let mut kept = Vec::new();
+    let mut used = 0;
+    for ch in text.chars().rev() {
+        let width = ch.width().unwrap_or(0);
+        if used + width > max {
+            break;
+        }
+        used += width;
+        kept.push(ch);
+    }
+    kept.into_iter().rev().collect()
+}
+
+fn is_modifier_key(keysym: u32) -> bool {
+    matches!(
+        keysym,
+        key::Shift_L
+            | key::Shift_R
+            | key::Control_L
+            | key::Control_R
+            | key::Alt_L
+            | key::Alt_R
+            | key::Meta_L
+            | key::Meta_R
+            | key::Super_L
+            | key::Super_R
+            | key::Hyper_L
+            | key::Hyper_R
+            | key::ISO_Level3_Shift
+            | key::Mode_switch
+            | key::Caps_Lock
+            | key::Shift_Lock
+            | key::Num_Lock
+    )
+}
+
 fn parse_cursor_style(value: &str) -> CursorStyle {
     match value.to_ascii_lowercase().as_str() {
         "beam" | "bar" => CursorStyle::Beam,
@@ -1147,5 +1589,33 @@ impl From<Mods> for crate::vt::MouseMods {
             alt: mods.alt,
             ctrl: mods.control,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tail_truncation_counts_display_cells() {
+        assert_eq!(tail_to_width("abcdef", 3), "def");
+        assert_eq!(tail_to_width("\u{4e16}\u{754c}ab", 3), "ab");
+        assert_eq!(tail_to_width("\u{4e16}\u{754c}ab", 4), "\u{754c}ab");
+    }
+
+    #[test]
+    fn menu_rows_skip_padding_and_overflow() {
+        assert_eq!(menu_row_at(0, 20, 4), Some(0));
+        assert_eq!(menu_row_at(20, 20, 4), Some(1));
+        assert_eq!(menu_row_at(-2, 20, 4), None);
+        assert_eq!(menu_row_at(80, 20, 4), None);
+    }
+
+    #[test]
+    fn modifier_presses_do_not_dismiss_menus() {
+        assert!(is_modifier_key(key::Shift_L));
+        assert!(is_modifier_key(key::Control_R));
+        assert!(!is_modifier_key(key::Escape));
+        assert!(!is_modifier_key(key::f));
     }
 }
