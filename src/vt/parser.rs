@@ -268,8 +268,8 @@ impl Parser {
                 }
             }
             0x30..=0x7e => {
-                let intermediates = self.intermediates[..self.intermediate_len].to_vec();
-                terminal.esc_dispatch(&intermediates, byte);
+                let intermediates = &self.intermediates[..self.intermediate_len];
+                terminal.esc_dispatch(intermediates, byte);
                 self.state = State::Ground;
             }
             _ => {
@@ -371,10 +371,10 @@ impl Parser {
     }
 
     fn dispatch_csi(&mut self, terminal: &mut Terminal, final_byte: u8) {
-        let intermediates = self.intermediates[..self.intermediate_len].to_vec();
+        let intermediates = &self.intermediates[..self.intermediate_len];
         terminal.csi_dispatch(
             self.private,
-            &intermediates,
+            intermediates,
             &self.params,
             &self.separators,
             final_byte,

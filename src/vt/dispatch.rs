@@ -30,17 +30,21 @@ impl Terminal {
             [b'#'] => {
                 if final_byte == b'8' {
                     let attrs = Attrs::default();
-                    for y in 0..self.rows {
-                        for x in 0..self.cols {
-                            self.lines_mut()[y].cells[x] = Cell {
+                    let (fg, bg) = (self.pen.fg, self.pen.bg);
+                    let (rows, cols) = (self.rows, self.cols);
+                    for y in 0..rows {
+                        let line = &mut self.lines_mut()[y];
+                        for x in 0..cols {
+                            line.cells[x] = Cell {
                                 ch: 'E',
                                 extra: 0,
-                                fg: self.pen.fg,
-                                bg: self.pen.bg,
+                                fg,
+                                bg,
                                 attrs,
                                 width: 1,
                             };
                         }
+                        line.mark_all_written();
                     }
                     self.mark_all();
                 }

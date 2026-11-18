@@ -109,6 +109,46 @@ pub struct Line {
     /// Cells, always exactly the terminal width after a resize.
     pub cells: Vec<Cell>,
     pub wrapped: bool,
+    /// Columns written since the last clear. Cells outside the range are
+    /// guaranteed blank, so recycling only has to clear the range.
+    written_min: usize,
+    written_max: usize,
+}
+
+impl Line {
+    fn new(id: u64, cells: Vec<Cell>) -> Self {
+        Self {
+            id,
+            cells,
+            wrapped: false,
+            written_min: usize::MAX,
+            written_max: 0,
+        }
+    }
+
+    fn mark_written(&mut self, col: usize) {
+        if col < self.written_min {
+            self.written_min = col;
+        }
+        if col > self.written_max {
+            self.written_max = col;
+        }
+    }
+
+    fn mark_all_written(&mut self) {
+        self.written_min = 0;
+        self.written_max = self.cells.len().saturating_sub(1);
+    }
+
+    fn clear_written(&mut self) {
+        if self.written_min <= self.written_max {
+            for cell in &mut self.cells[self.written_min..=self.written_max] {
+                *cell = Cell::blank();
+            }
+        }
+        self.written_min = usize::MAX;
+        self.written_max = 0;
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -936,20 +976,16 @@ impl Terminal {
         let id = self.line_id_next;
         self.line_id_next = self.line_id_next.wrapping_add(1);
         let cells = if let Some(mut line) = self.blank_lines.pop() {
-            line.cells.fill(Cell::blank());
             line.cells.resize(self.cols, Cell::blank());
             line.cells
         } else {
             vec![Cell::blank(); self.cols]
         };
-        Line {
-            id,
-            cells,
-            wrapped: false,
-        }
+        Line::new(id, cells)
     }
 
-    fn recycle_line(&mut self, line: Line) {
+    fn recycle_line(&mut self, mut line: Line) {
+        line.clear_written();
         if self.blank_lines.len() < 64 {
             self.blank_lines.push(line);
         }
@@ -1014,6 +1050,7 @@ impl Terminal {
         {
             let line = &mut self.lines_mut()[y];
             line.cells[x] = cell;
+            line.mark_written(x);
             line.wrapped = false;
             if width == 2 {
                 let mut continuation = cell;
@@ -1021,6 +1058,7 @@ impl Terminal {
                 continuation.extra = 0;
                 continuation.width = 0;
                 line.cells[x + 1] = continuation;
+                line.mark_written(x + 1);
             }
         }
         self.last_printed = Some((y, x));
@@ -1091,6 +1129,7 @@ impl Terminal {
                         attrs,
                         width: 1,
                     };
+                    line.mark_written(x);
                     line.wrapped = false;
                     x += 1;
                     if x == cols {
@@ -1156,6 +1195,7 @@ impl Terminal {
                         attrs,
                         width: 1,
                     };
+                    line.mark_written(x);
                 }
                 line.wrapped = false;
                 segment[segment.len() - 1] as char
@@ -1212,28 +1252,37 @@ impl Terminal {
         let new_width = UnicodeWidthStr::width(cluster.as_str()).clamp(1, 2) as u8;
         cell.extra = self.intern_extra(&cluster[cell.ch.len_utf8()..]);
         cell.width = new_width;
-        self.lines_mut()[y].cells[x] = cell;
-        let next = x + 1;
-        if next < self.cols {
-            match (old_width, new_width) {
-                (1, 2) => {
-                    let mut continuation = cell;
-                    continuation.ch = ' ';
-                    continuation.extra = 0;
-                    continuation.width = 0;
-                    self.lines_mut()[y].cells[next] = continuation;
-                    if self.cursor.y == y && self.cursor.x == x + 1 {
-                        self.cursor.x = (x + 2).min(self.cols - 1);
+        let cols = self.cols;
+        let mut advance = false;
+        {
+            let line = &mut self.lines_mut()[y];
+            line.cells[x] = cell;
+            line.mark_written(x);
+            let next = x + 1;
+            if next < cols {
+                match (old_width, new_width) {
+                    (1, 2) => {
+                        let mut continuation = cell;
+                        continuation.ch = ' ';
+                        continuation.extra = 0;
+                        continuation.width = 0;
+                        line.cells[next] = continuation;
+                        line.mark_written(next);
+                        advance = true;
                     }
+                    (2, 1) if line.cells[next].width == 0 => {
+                        line.cells[next] = Cell {
+                            bg: cell.bg,
+                            ..Cell::blank()
+                        };
+                        line.mark_written(next);
+                    }
+                    _ => {}
                 }
-                (2, 1) if self.lines()[y].cells[next].width == 0 => {
-                    self.lines_mut()[y].cells[next] = Cell {
-                        bg: cell.bg,
-                        ..Cell::blank()
-                    };
-                }
-                _ => {}
             }
+        }
+        if advance && self.cursor.y == y && self.cursor.x == x + 1 {
+            self.cursor.x = (x + 2).min(self.cols - 1);
         }
         self.mark_row(y);
     }
@@ -1253,9 +1302,8 @@ impl Terminal {
     }
 
     fn clear_wide_at(&mut self, y: usize, x: usize) {
-        let Some(line) = self.lines().get(y) else {
-            return;
-        };
+        let cols = self.cols;
+        let line = &mut self.lines_mut()[y];
         let Some(cell) = line.cells.get(x).copied() else {
             return;
         };
@@ -1263,22 +1311,25 @@ impl Terminal {
             if x > 0 {
                 let previous = line.cells[x - 1];
                 if previous.width == 2 {
-                    self.lines_mut()[y].cells[x - 1] = Cell {
+                    line.cells[x - 1] = Cell {
                         bg: previous.bg,
                         ..Cell::blank()
                     };
+                    line.mark_written(x - 1);
                 }
             }
-            self.lines_mut()[y].cells[x] = Cell {
+            line.cells[x] = Cell {
                 bg: cell.bg,
                 ..Cell::blank()
             };
-        } else if cell.width == 2 && x + 1 < self.cols {
+            line.mark_written(x);
+        } else if cell.width == 2 && x + 1 < cols {
             let next = line.cells[x + 1];
-            self.lines_mut()[y].cells[x + 1] = Cell {
+            line.cells[x + 1] = Cell {
                 bg: next.bg,
                 ..Cell::blank()
             };
+            line.mark_written(x + 1);
         }
     }
 
@@ -1482,6 +1533,7 @@ impl Terminal {
                 ..Cell::blank()
             };
         }
+        line.mark_all_written();
         self.mark_row(y);
     }
 
@@ -1500,6 +1552,7 @@ impl Terminal {
                 ..Cell::blank()
             };
         }
+        line.mark_all_written();
         self.mark_row(y);
     }
 
@@ -1532,6 +1585,7 @@ impl Terminal {
                 ..Cell::blank()
             };
         }
+        line.mark_all_written();
         self.mark_row(y);
     }
 
@@ -1743,6 +1797,7 @@ fn resize_line(line: &mut Line, cols: usize) {
     if line.cells.is_empty() {
         line.cells.push(Cell::blank());
     }
+    line.mark_all_written();
 }
 
 fn ordered(a: Anchor, b: Anchor) -> (Anchor, Anchor) {
@@ -1931,6 +1986,29 @@ mod tests {
         let damage = terminal.take_damage();
         assert_eq!(damage.scroll, 3);
         assert!(damage.rows.iter().all(|dirty| *dirty), "{:?}", damage.rows);
+    }
+
+    #[test]
+    fn recycled_lines_are_blank_outside_written_range() {
+        let theme = Theme::from_config(&crate::config::ColorsConfig::default()).unwrap();
+        let mut terminal = Terminal::new(4, 2, 2, theme, CursorStyle::Block, false);
+        let mut parser = Parser::new();
+        for _ in 0..10 {
+            parser.advance(b"AAAA\r\n", &mut terminal);
+        }
+        for _ in 0..5 {
+            parser.advance(b"B\r\n", &mut terminal);
+        }
+        for row in 0..2 {
+            let line = terminal.visible_line(row).unwrap();
+            for col in 1..4 {
+                assert!(
+                    line.cells[col].is_blank(),
+                    "row {row} col {col} = {:?}",
+                    line.cells[col]
+                );
+            }
+        }
     }
 
     #[test]
