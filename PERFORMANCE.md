@@ -15,7 +15,7 @@ Ghostty. The numbers are indicative, not a full benchmark suite.
 
 | Terminal | Version | Renderer |
 |---|---|---|
-| Reliabilitty | 0.1.4 | CPU, swash |
+| Reliabilitty | 0.1.5 | CPU, swash |
 | st | 0.9.3 | CPU, Xft |
 | xfce4-terminal | 1.2.0 | CPU, VTE |
 | Alacritty | 0.17.0 | GPU, OpenGL |
@@ -40,51 +40,51 @@ Ghostty. The numbers are indicative, not a full benchmark suite.
 
 | # | Terminal | Launch time |
 |--:|---|---:|
-| 1 | Reliabilitty | 15.3 ms |
-| 2 | st | 45.0 ms |
-| 3 | xfce4-terminal | 119.9 ms |
-| 4 | Alacritty | 128.3 ms |
-| 5 | Ghostty | 195.6 ms |
+| 1 | Reliabilitty | 13.7 ms |
+| 2 | st | 48.2 ms |
+| 3 | xfce4-terminal | 126.2 ms |
+| 4 | Alacritty | 139.3 ms |
+| 5 | Ghostty | 197.8 ms |
 
 ### RSS
 
 | # | Terminal | RSS |
 |--:|---|---:|
-| 1 | st | 15.2 MiB |
-| 2 | Reliabilitty | 30.8 MiB |
+| 1 | st | 15.3 MiB |
+| 2 | Reliabilitty | 28.8 MiB |
 | 3 | xfce4-terminal | 78.8 MiB |
-| 4 | Alacritty | 96.0 MiB |
-| 5 | Ghostty | 152.0 MiB |
+| 4 | Alacritty | 95.5 MiB |
+| 5 | Ghostty | 151.9 MiB |
 
 ### PSS
 
 | # | Terminal | PSS |
 |--:|---|---:|
-| 1 | st | 4.5 MiB |
-| 2 | Reliabilitty | 26.2 MiB |
-| 3 | xfce4-terminal | 28.6 MiB |
-| 4 | Alacritty | 47.1 MiB |
-| 5 | Ghostty | 93.4 MiB |
+| 1 | st | 4.6 MiB |
+| 2 | Reliabilitty | 24.2 MiB |
+| 3 | xfce4-terminal | 28.7 MiB |
+| 4 | Alacritty | 46.7 MiB |
+| 5 | Ghostty | 93.2 MiB |
 
 ### 10000 lines
 
 | # | Terminal | Draw time |
 |--:|---|---:|
-| 1 | Reliabilitty | 35.7 ms |
-| 2 | st | 47.0 ms |
-| 3 | Alacritty | 131.8 ms |
-| 4 | xfce4-terminal | 145.9 ms |
-| 5 | Ghostty | 283.4 ms |
+| 1 | Reliabilitty | 34.2 ms |
+| 2 | st | 45.7 ms |
+| 3 | Alacritty | 129.9 ms |
+| 4 | xfce4-terminal | 152.0 ms |
+| 5 | Ghostty | 270.0 ms |
 
 ### CPU while drawing 10000 lines
 
 | # | Terminal | CPU time | CPU / wall |
 |--:|---|---:|---:|
-| 1 | Reliabilitty | 8.1 ms | 24.7% |
-| 2 | st | 24.7 ms | 54.7% |
-| 3 | xfce4-terminal | 70.2 ms | 48.1% |
-| 4 | Alacritty | 74.8 ms | 57.1% |
-| 5 | Ghostty | 115.0 ms | 41.1% |
+| 1 | Reliabilitty | 8.3 ms | 23.2% |
+| 2 | st | 24.0 ms | 53.9% |
+| 3 | Alacritty | 71.9 ms | 54.5% |
+| 4 | xfce4-terminal | 73.1 ms | 48.8% |
+| 5 | Ghostty | 109.9 ms | 40.2% |
 
 Reliabilitty processes the text fastest and uses the least CPU. xfce4-terminal
 sits between the lightweight terminals and the GPU terminals on every metric.
@@ -93,11 +93,11 @@ sits between the lightweight terminals and the GPU terminals on every metric.
 
 | Terminal | Launch | RSS | PSS | Draw | CPU |
 |---|---:|---:|---:|---:|---:|
-| Reliabilitty | 15.3 ms | 30.8 MiB | 26.2 MiB | 35.7 ms | 8.1 ms (24.7%) |
-| st | 45.0 ms | 15.2 MiB | 4.5 MiB | 47.0 ms | 24.7 ms (54.7%) |
-| xfce4-terminal | 119.9 ms | 78.8 MiB | 28.6 MiB | 145.9 ms | 70.2 ms (48.1%) |
-| Alacritty | 128.3 ms | 96.0 MiB | 47.1 MiB | 131.8 ms | 74.8 ms (57.1%) |
-| Ghostty | 195.6 ms | 152.0 MiB | 93.4 MiB | 283.4 ms | 115.0 ms (41.1%) |
+| Reliabilitty | 13.7 ms | 28.8 MiB | 24.2 MiB | 34.2 ms | 8.3 ms (23.2%) |
+| st | 48.2 ms | 15.3 MiB | 4.6 MiB | 45.7 ms | 24.0 ms (53.9%) |
+| xfce4-terminal | 126.2 ms | 78.8 MiB | 28.7 MiB | 152.0 ms | 73.1 ms (48.8%) |
+| Alacritty | 139.3 ms | 95.5 MiB | 46.7 MiB | 129.9 ms | 71.9 ms (54.5%) |
+| Ghostty | 197.8 ms | 151.9 MiB | 93.2 MiB | 270.0 ms | 109.9 ms (40.2%) |
 
 Reliabilitty is fastest to launch, draws text fastest, and uses the least CPU.
 st wins RSS and PSS because it is a smaller C process. xfce4-terminal is close
@@ -105,7 +105,7 @@ to Alacritty on draw time and CPU, but uses less memory and starts slightly
 faster. Reliabilitty and st are far lighter than the GPU terminals here.
 
 Reliabilitty uses about twice the memory it did before switching to mimalloc
-as the global allocator (roughly 14 -> 31 MiB RSS). mimalloc reserves arena
+as the global allocator (roughly 14 -> 29 MiB RSS). mimalloc reserves arena
 memory up front; this is the main cost of the allocator change and is why st
 now has a clear edge on RSS and PSS.
 
@@ -140,3 +140,32 @@ not from the shell or the number of config files.
 
 See [GTK4-slow-launch-speed-test](https://github.com/Samueru-sama/GTK4-slow-launch-speed-test)
 for the full investigation and a minimal GTK3/GTK4 reproduction.
+
+## vtebench
+
+[vtebench](https://github.com/alacritty/vtebench) measures how long a child
+blocks writing to the PTY while the terminal reads and processes the output.
+It stresses PTY read throughput only, not frame rate or latency, so these
+numbers are separate from the draw and CPU results above. Each terminal ran
+the full suite with the default settings (1 MiB minimum sample, 10 seconds per
+benchmark). Values are mean milliseconds; lower is better.
+
+| Benchmark | Reliabilitty | st | xfce4-terminal | Alacritty | Ghostty |
+|---|---:|---:|---:|---:|---:|
+| cursor_motion | 16 | 52 | 23 | 12 | 9 |
+| dense_cells | 39 | 940 | 578 | 33 | 33 |
+| light_cells | 5 | 25 | 9 | 10 | 2 |
+| medium_cells | 10 | 34 | 21 | 12 | 10 |
+| scrolling | 276 | 379 | 190 | 109 | 129 |
+| scrolling_bottom_region | 219 | 385 | 194 | 111 | 120 |
+| scrolling_bottom_small_region | 226 | 345 | 213 | 112 | 119 |
+| scrolling_fullscreen | 13 | 27 | 19 | 12 | 28 |
+| scrolling_top_region | 228 | 331 | 272 | 112 | 124 |
+| scrolling_top_small_region | 376 | 341 | 219 | 112 | 120 |
+| sync_medium_cells | 10 | 36 | 20 | 13 | 10 |
+| unicode | 18 | 132 | 94 | 9 | 3 |
+| **Total** | **1438** | **3027** | **1852** | **657** | **707** |
+
+The GPU terminals lead on pure PTY read throughput. Reliabilitty is close to
+st overall and well ahead of it on the cell and unicode workloads, but VTE is
+faster on several of the line-scrolling benchmarks.
