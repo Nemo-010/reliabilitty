@@ -34,8 +34,8 @@ impl Terminal {
                     let (rows, cols) = (self.rows, self.cols);
                     for y in 0..rows {
                         let line = &mut self.lines_mut()[y];
-                        for x in 0..cols {
-                            line.cells[x] = Cell {
+                        for cell in line.cells.iter_mut().take(cols) {
+                            *cell = Cell {
                                 ch: 'E',
                                 extra: 0,
                                 fg,

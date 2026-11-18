@@ -2001,12 +2001,8 @@ mod tests {
         }
         for row in 0..2 {
             let line = terminal.visible_line(row).unwrap();
-            for col in 1..4 {
-                assert!(
-                    line.cells[col].is_blank(),
-                    "row {row} col {col} = {:?}",
-                    line.cells[col]
-                );
+            for (col, cell) in line.cells.iter().enumerate().skip(1) {
+                assert!(cell.is_blank(), "row {row} col {col} = {cell:?}");
             }
         }
     }
