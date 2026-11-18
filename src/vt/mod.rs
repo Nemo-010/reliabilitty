@@ -237,8 +237,8 @@ pub struct Terminal {
     pub cell_height: u16,
     pub window_width: u16,
     pub window_height: u16,
-    main: Vec<Line>,
-    alt: Option<Vec<Line>>,
+    main: VecDeque<Line>,
+    alt: Option<VecDeque<Line>>,
     scrollback: VecDeque<Line>,
     history: usize,
     pub cursor: Cursor,
@@ -305,7 +305,7 @@ impl Terminal {
             cell_height: 16,
             window_width: 0,
             window_height: 0,
-            main: Vec::new(),
+            main: VecDeque::new(),
             alt: None,
             scrollback: VecDeque::new(),
             history,
@@ -363,7 +363,7 @@ impl Terminal {
         terminal.reset_tabs();
         for _ in 0..rows {
             let line = terminal.new_line();
-            terminal.main.push(line);
+            terminal.main.push_back(line);
         }
         terminal
     }
@@ -420,14 +420,14 @@ impl Terminal {
         self.cursor.visible
     }
 
-    pub fn lines(&self) -> &[Line] {
+    pub fn lines(&self) -> &VecDeque<Line> {
         match &self.alt {
             Some(alt) => alt,
             None => &self.main,
         }
     }
 
-    fn lines_mut(&mut self) -> &mut Vec<Line> {
+    fn lines_mut(&mut self) -> &mut VecDeque<Line> {
         match &mut self.alt {
             Some(alt) => alt,
             None => &mut self.main,
@@ -856,13 +856,13 @@ impl Terminal {
         }
         while self.main.len() < rows {
             let line = self.new_line();
-            self.main.push(line);
+            self.main.push_back(line);
         }
         self.main.truncate(rows);
         if self.alt.as_ref().is_some_and(|alt| alt.len() < rows) {
-            let mut extra = Vec::new();
-            while self.alt.as_ref().map_or(0, Vec::len) + extra.len() < rows {
-                extra.push(self.new_line());
+            let mut extra = VecDeque::new();
+            while self.alt.as_ref().map_or(0, VecDeque::len) + extra.len() < rows {
+                extra.push_back(self.new_line());
             }
             if let Some(alt) = &mut self.alt {
                 alt.extend(extra);
@@ -1396,7 +1396,7 @@ impl Terminal {
         let shift = full && self.scroll_offset == 0;
         for _ in 0..count {
             if full && allow_history && !self.in_alt() {
-                let removed = self.main.remove(top);
+                let removed = self.main.pop_front().unwrap_or_else(|| self.new_line());
                 if self.history != 0 {
                     self.scrollback.push_back(removed);
                     while self.scrollback.len() > self.history {
@@ -1411,10 +1411,11 @@ impl Terminal {
                     self.recycle_line(removed);
                 }
                 let line = self.new_line();
-                self.main.push(line);
+                self.main.push_back(line);
             } else {
-                let removed = self.lines_mut().remove(top);
-                self.recycle_line(removed);
+                if let Some(removed) = self.lines_mut().remove(top) {
+                    self.recycle_line(removed);
+                }
                 let line = self.new_line();
                 self.lines_mut().insert(bottom, line);
             }
@@ -1438,10 +1439,21 @@ impl Terminal {
         let full = top == 0 && bottom + 1 == self.rows;
         let shift = full && !self.in_alt() && self.scroll_offset == 0;
         for _ in 0..count {
-            let line = self.new_line();
-            let lines = self.lines_mut();
-            lines.remove(bottom);
-            lines.insert(top, line);
+            if full {
+                let removed = self
+                    .lines_mut()
+                    .pop_back()
+                    .unwrap_or_else(|| self.new_line());
+                self.recycle_line(removed);
+                let line = self.new_line();
+                self.lines_mut().push_front(line);
+            } else {
+                if let Some(removed) = self.lines_mut().remove(bottom) {
+                    self.recycle_line(removed);
+                }
+                let line = self.new_line();
+                self.lines_mut().insert(top, line);
+            }
         }
         if shift {
             self.pending_scroll -= count as i32;
@@ -1643,7 +1655,7 @@ impl Terminal {
             self.alt = Some(
                 (0..self.rows)
                     .map(|_| self.new_line())
-                    .collect::<Vec<Line>>(),
+                    .collect::<VecDeque<Line>>(),
             );
             self.cursor.x = 0;
             self.cursor.y = 0;
@@ -1666,7 +1678,7 @@ impl Terminal {
         self.main.clear();
         for _ in 0..self.rows {
             let line = self.new_line();
-            self.main.push(line);
+            self.main.push_back(line);
         }
         self.alt = None;
         self.scrollback.clear();
