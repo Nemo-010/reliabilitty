@@ -96,8 +96,9 @@ Alacritty and Ghostty. The numbers are indicative, not a full benchmark suite.
 | 5 | Ghostty | 115.5 ms | 40.3% |
 | 6 | Ptyxis | 183.7 ms | 49.0% |
 
-Reliabilitty processes the text fastest and uses the least CPU. Ptyxis is the
-slowest and heaviest of the group despite its GTK4 stack.
+Reliabilitty processes the text fastest and uses the least CPU: 7.2 ms versus
+23.3 ms for st and 74.5-183.7 ms for the GPU terminals. Ptyxis is the slowest
+and heaviest of the group despite its GTK4 stack.
 
 ## Combined
 
@@ -110,19 +111,21 @@ slowest and heaviest of the group despite its GTK4 stack.
 | st | 44.5 ms | 15.3 MiB | 4.8 MiB | 47.6 ms | 24.8 ms (54.8%) |
 | xfce4-terminal | 143.3 ms | 79.4 MiB | 32.1 MiB | 164.7 ms | 80.9 ms (48.9%) |
 
-Reliabilitty is fastest to launch, draws text fastest, and uses the least CPU.
-st wins RSS and PSS because it is a smaller C process. Ptyxis is slower and
-heavier than the other GTK/GPU terminals here.
+Reliabilitty is fastest to launch, draws text fastest, and uses the least CPU:
+it launches about 9x faster than Alacritty, draws about 4x faster, and uses
+about one tenth of the CPU. st wins RSS and PSS because it is a smaller C
+process. Ptyxis is the slowest and heaviest of the group.
 
 Reliabilitty uses about twice the memory it did before switching to mimalloc
 as the global allocator (roughly 14 -> 29 MiB RSS). mimalloc reserves arena
 memory up front; this is the main cost of the allocator change and is why st
 now has a clear edge on RSS and PSS.
 
-The GPU terminals pay for their renderer, toolkit and GPU stack even before
-text is drawn. That does not make GPU rendering useless in every case, but
-for a normal terminal workload the CPU path is already cheap enough that the
-extra machinery buys very little.
+The GPU terminals remain slightly ahead only on raw PTY read throughput: their
+vtebench totals are 673 ms and 706 ms versus Reliabilitty's 740 ms. On launch,
+draw time and CPU use they are several times slower. That does not make GPU
+rendering useless in every case, but for a normal terminal workload the CPU
+path is already cheap enough that the extra machinery buys very little.
 
 ## vtebench
 
@@ -149,9 +152,10 @@ benchmark). Values are mean milliseconds; lower is better.
 | unicode | 16 ms | 9 ms | 3 ms | 36 ms | 129 ms | 30 ms |
 | **Total** | **740 ms** | **673 ms** | **706 ms** | **1142 ms** | **3281 ms** | **1247 ms** |
 
-The GPU terminals lead on pure PTY read throughput. Reliabilitty is about 4x
-faster than st overall, ahead of both VTE terminals, and close to the GPU
-terminals on most workloads.
+Alacritty and Ghostty lead on pure PTY read throughput, but only by a narrow
+margin: 673 ms and 706 ms in total versus Reliabilitty's 740 ms. Reliabilitty
+is about 4x faster than st overall, ahead of both VTE terminals, and leads the
+GPU terminals decisively on launch time, draw time and CPU use.
 
 ## Ghostty and GTK4
 
