@@ -55,7 +55,7 @@ It is meant to be a terminal emulator that you can count on to always launch!
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Config file | rtty.conf | TOML | foot.ini | key=value | GUI settings | needs patch | GUI settings |
 | Live reload | yes | yes | no | yes | yes | no | yes |
-| Env overrides | yes | no | no | no | no | no | no |
+| Configurable via env variables | yes | no | no | no | no | no | no |
 | Scrollback | yes | yes | yes | yes | yes | needs patch | yes |
 | Scrollbar | yes | no | no | yes | yes | needs patch | yes |
 | Truecolor | yes | yes | yes | yes | yes | needs patch | yes |
