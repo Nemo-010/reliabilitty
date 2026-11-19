@@ -1387,7 +1387,7 @@ impl Terminal {
     fn print(&mut self, ch: char) {
         // Fast path for the common case: printable ASCII in the normal charset,
         // no wrap pending, no insert mode, and room for one cell on this line.
-        if ch.is_ascii()
+        if (' '..='~').contains(&ch)
             && self.single_shift.is_none()
             && self.charsets[self.active_charset] == Charset::Ascii
             && !self.wrap_pending

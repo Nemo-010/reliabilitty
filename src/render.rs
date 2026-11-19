@@ -780,14 +780,13 @@ impl Renderer {
             font: glyph.font,
             glyph: glyph.glyph,
         };
-        if let Some(cached) = self.glyph_cache.get(&key) {
-            return cached.as_ref();
+        if !self.glyph_cache.contains_key(&key) {
+            if self.glyph_cache.len() > 65536 {
+                self.glyph_cache.clear();
+            }
+            let bitmap = self.rasterize_uncached(glyph);
+            self.glyph_cache.insert(key, bitmap);
         }
-        if self.glyph_cache.len() > 65536 {
-            self.glyph_cache.clear();
-        }
-        let bitmap = self.rasterize_uncached(glyph);
-        self.glyph_cache.insert(key, bitmap);
         self.glyph_cache.get(&key).and_then(Option::as_ref)
     }
 
