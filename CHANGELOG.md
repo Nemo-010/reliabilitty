@@ -1,4 +1,19 @@
 
+## [0.1.11](https://github.com/pkgforge-apps/reliabilitty/compare/v0.1.10...v0.1.11) - 2026-11-19
+
+### Features
+
+- Support the kitty keyboard protocol disambiguation flag - ([17d2442](https://github.com/pkgforge-apps/reliabilitty/commit/17d2442f778e65d0305fd2262c8da074cdcf9727))
+
+### Documentation
+
+- Add terminals to feature table and sort tables alphabetically - ([5f5eb20](https://github.com/pkgforge-apps/reliabilitty/commit/5f5eb203a9303280eb7f0e37e98cbc742382c7fc))
+
+### Performance
+
+- *(vt)* Fast-path CSI cursor positioning sequences - ([e16d6a6](https://github.com/pkgforge-apps/reliabilitty/commit/e16d6a6dd4649bb02dd4167131d94a796494b2f4))
+- *(vt)* Fast-path UTF-8 decoding and widen font fallbacks - ([e6a93cf](https://github.com/pkgforge-apps/reliabilitty/commit/e6a93cfbdeaa13a6fe652bc91f3f9d2a2bba8f21))
+
 ## [0.1.10](https://github.com/pkgforge-apps/reliabilitty/compare/v0.1.9...v0.1.10) - 2026-11-18
 
 ### Performance
