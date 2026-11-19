@@ -51,20 +51,21 @@ It is meant to be a terminal emulator that you can count on to always launch!
 
 ## Feature comparison
 
-| Feature | Reliabilitty | st | Alacritty | Ghostty |
-| --- | --- | --- | --- | --- |
-| Config file | rtty.conf | needs patch | TOML | key=value |
-| Live reload | yes | no | yes | yes |
-| Env overrides | yes | no | no | no |
-| Scrollback | yes | needs patch | yes | yes |
-| Scrollbar | yes | needs patch | no | yes |
-| Truecolor | yes | needs patch | yes | yes |
-| Transparency | yes, background | needs patch | yes, whole window incl. text | yes, background |
-| Mouse reporting | yes | yes | yes | yes |
-| OSC 52 clipboard | yes | needs patch | yes | yes |
-| Search | yes | no | yes | yes |
-| Vi mode | no | no | yes | yes |
-| Ligatures | no | no | no | yes |
+| Feature | Reliabilitty | Alacritty | Ghostty | Ptyxis | st | xfce4-terminal |
+| --- | --- | --- | --- | --- | --- | --- |
+| Config file | rtty.conf | TOML | key=value | GUI settings | needs patch | GUI settings |
+| Live reload | yes | yes | yes | yes | no | yes |
+| Env overrides | yes | no | no | no | no | no |
+| Scrollback | yes | yes | yes | yes | needs patch | yes |
+| Scrollbar | yes | no | yes | yes | needs patch | yes |
+| Truecolor | yes | yes | yes | yes | needs patch | yes |
+| Transparency | yes, background | yes, whole window incl. text | yes, background | yes, background | needs patch | yes, background |
+| Mouse reporting | yes | yes | yes | yes | yes | yes |
+| OSC 52 clipboard | yes | yes | yes | no | needs patch | no |
+| Search | yes | yes | yes | yes | no | yes |
+| Vi mode | no | yes | yes | no | no | no |
+| Ligatures | no | no | yes | no | no | no |
+| Kitty keyboard protocol | yes, disambiguation | yes | yes | no | no | no |
 
 See [PERFORMANCE.md](PERFORMANCE.md) for benchmarks.
 
