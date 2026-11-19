@@ -19,7 +19,7 @@ Alacritty and Ghostty. The numbers are indicative, not a full benchmark suite.
 
 | Terminal | Version | Renderer |
 |---|---|---|
-| Reliabilitty | 0.1.8 | CPU, swash |
+| Reliabilitty | 0.1.11 | CPU, swash |
 | Alacritty | 0.17.0 | GPU, OpenGL |
 | Ghostty | 1.4.0-arch1 | GPU, OpenGL |
 | Ptyxis | 50.1 | GPU, GTK4/VTE |
@@ -45,56 +45,56 @@ Alacritty and Ghostty. The numbers are indicative, not a full benchmark suite.
 
 | # | Terminal | Launch time |
 |--:|---|---:|
-| 1 | Reliabilitty | 14.5 ms |
-| 2 | st | 46.0 ms |
-| 3 | Alacritty | 126.8 ms |
-| 4 | xfce4-terminal | 159.3 ms |
-| 5 | Ghostty | 192.8 ms |
-| 6 | Ptyxis | 377.5 ms |
+| 1 | Reliabilitty | 16.1 ms |
+| 2 | st | 44.5 ms |
+| 3 | Alacritty | 142.1 ms |
+| 4 | xfce4-terminal | 143.3 ms |
+| 5 | Ghostty | 198.9 ms |
+| 6 | Ptyxis | 302.7 ms |
 
 ### RSS
 
 | # | Terminal | RSS |
 |--:|---|---:|
 | 1 | st | 15.3 MiB |
-| 2 | Reliabilitty | 28.8 MiB |
-| 3 | xfce4-terminal | 79.5 MiB |
-| 4 | Alacritty | 95.7 MiB |
-| 5 | Ptyxis | 139.2 MiB |
-| 6 | Ghostty | 151.6 MiB |
+| 2 | Reliabilitty | 28.9 MiB |
+| 3 | xfce4-terminal | 79.4 MiB |
+| 4 | Alacritty | 94.0 MiB |
+| 5 | Ptyxis | 136.6 MiB |
+| 6 | Ghostty | 150.3 MiB |
 
 ### PSS
 
 | # | Terminal | PSS |
 |--:|---|---:|
-| 1 | st | 4.9 MiB |
+| 1 | st | 4.8 MiB |
 | 2 | Reliabilitty | 24.3 MiB |
-| 3 | xfce4-terminal | 32.4 MiB |
-| 4 | Alacritty | 48.7 MiB |
-| 5 | Ptyxis | 74.0 MiB |
-| 6 | Ghostty | 95.4 MiB |
+| 3 | xfce4-terminal | 32.1 MiB |
+| 4 | Alacritty | 59.5 MiB |
+| 5 | Ptyxis | 84.2 MiB |
+| 6 | Ghostty | 106.7 MiB |
 
 ### 10000 lines
 
 | # | Terminal | Draw time |
 |--:|---|---:|
-| 1 | Reliabilitty | 36.3 ms |
-| 2 | st | 49.0 ms |
-| 3 | Alacritty | 136.5 ms |
-| 4 | xfce4-terminal | 162.4 ms |
-| 5 | Ghostty | 278.2 ms |
-| 6 | Ptyxis | 360.3 ms |
+| 1 | Reliabilitty | 36.5 ms |
+| 2 | st | 47.6 ms |
+| 3 | Alacritty | 135.3 ms |
+| 4 | xfce4-terminal | 164.7 ms |
+| 5 | Ghostty | 285.2 ms |
+| 6 | Ptyxis | 372.1 ms |
 
 ### CPU while drawing 10000 lines
 
 | # | Terminal | CPU time | CPU / wall |
 |--:|---|---:|---:|
-| 1 | Reliabilitty | 7.0 ms | 21.8% |
-| 2 | st | 25.7 ms | 52.3% |
-| 3 | Alacritty | 74.7 ms | 55.4% |
-| 4 | xfce4-terminal | 80.9 ms | 49.7% |
-| 5 | Ghostty | 111.7 ms | 40.4% |
-| 6 | Ptyxis | 178.6 ms | 49.4% |
+| 1 | Reliabilitty | 7.2 ms | 17.7% |
+| 2 | st | 24.8 ms | 54.8% |
+| 3 | Alacritty | 76.4 ms | 54.9% |
+| 4 | xfce4-terminal | 80.9 ms | 48.9% |
+| 5 | Ghostty | 115.5 ms | 40.3% |
+| 6 | Ptyxis | 183.7 ms | 49.0% |
 
 Reliabilitty processes the text fastest and uses the least CPU. Ptyxis is the
 slowest and heaviest of the group despite its GTK4 stack.
@@ -103,12 +103,12 @@ slowest and heaviest of the group despite its GTK4 stack.
 
 | Terminal | Launch | RSS | PSS | Draw | CPU |
 |---|---:|---:|---:|---:|---:|
-| Reliabilitty | 14.5 ms | 28.8 MiB | 24.3 MiB | 36.3 ms | 7.0 ms (21.8%) |
-| Alacritty | 126.8 ms | 95.7 MiB | 48.7 MiB | 136.5 ms | 74.7 ms (55.4%) |
-| Ghostty | 192.8 ms | 151.6 MiB | 95.4 MiB | 278.2 ms | 111.7 ms (40.4%) |
-| Ptyxis | 377.5 ms | 139.2 MiB | 74.0 MiB | 360.3 ms | 178.6 ms (49.4%) |
-| st | 46.0 ms | 15.3 MiB | 4.9 MiB | 49.0 ms | 25.7 ms (52.3%) |
-| xfce4-terminal | 159.3 ms | 79.5 MiB | 32.4 MiB | 162.4 ms | 80.9 ms (49.7%) |
+| Reliabilitty | 16.1 ms | 28.9 MiB | 24.3 MiB | 36.5 ms | 7.2 ms (17.7%) |
+| Alacritty | 142.1 ms | 94.0 MiB | 59.5 MiB | 135.3 ms | 76.4 ms (54.9%) |
+| Ghostty | 198.9 ms | 150.3 MiB | 106.7 MiB | 285.2 ms | 115.5 ms (40.3%) |
+| Ptyxis | 302.7 ms | 136.6 MiB | 84.2 MiB | 372.1 ms | 183.7 ms (49.0%) |
+| st | 44.5 ms | 15.3 MiB | 4.8 MiB | 47.6 ms | 24.8 ms (54.8%) |
+| xfce4-terminal | 143.3 ms | 79.4 MiB | 32.1 MiB | 164.7 ms | 80.9 ms (48.9%) |
 
 Reliabilitty is fastest to launch, draws text fastest, and uses the least CPU.
 st wins RSS and PSS because it is a smaller C process. Ptyxis is slower and
@@ -134,20 +134,20 @@ the full suite with the default settings (1 MiB minimum sample, 10 seconds per
 benchmark). Values are mean milliseconds; lower is better.
 
 | Benchmark | Reliabilitty | Alacritty | Ghostty | Ptyxis | st | xfce4-terminal |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| cursor_motion | 15 ms | 12 ms | 9 ms | 22 ms | 51 ms | 19 ms |
-| dense_cells | 38 ms | 33 ms | 33 ms | 132 ms | 866 ms | 137 ms |
-| light_cells | 5 ms | 11 ms | 2 ms | 7 ms | 25 ms | 10 ms |
-| medium_cells | 10 ms | 11 ms | 10 ms | 17 ms | 33 ms | 19 ms |
-| scrolling | 132 ms | 112 ms | 127 ms | 211 ms | 383 ms | 207 ms |
-| scrolling_bottom_region | 151 ms | 112 ms | 120 ms | 185 ms | 381 ms | 202 ms |
-| scrolling_bottom_small_region | 137 ms | 115 ms | 120 ms | 202 ms | 336 ms | 208 ms |
-| scrolling_fullscreen | 6 ms | 11 ms | 27 ms | 19 ms | 27 ms | 19 ms |
-| scrolling_top_region | 138 ms | 114 ms | 123 ms | 228 ms | 333 ms | 236 ms |
-| scrolling_top_small_region | 134 ms | 116 ms | 121 ms | 205 ms | 344 ms | 220 ms |
-| sync_medium_cells | 10 ms | 16 ms | 10 ms | 18 ms | 35 ms | 20 ms |
-| unicode | 17 ms | 9 ms | 3 ms | 38 ms | 299 ms | 50 ms |
-| **Total** | **795 ms** | **672 ms** | **704 ms** | **1284 ms** | **3113 ms** | **1347 ms** |
+|---|---:|---:|---:|---:|---:|---:|
+| cursor_motion | 9 ms | 12 ms | 9 ms | 20 ms | 52 ms | 18 ms |
+| dense_cells | 41 ms | 32 ms | 33 ms | 85 ms | 1190 ms | 125 ms |
+| light_cells | 6 ms | 10 ms | 2 ms | 6 ms | 25 ms | 7 ms |
+| medium_cells | 9 ms | 12 ms | 10 ms | 15 ms | 34 ms | 18 ms |
+| scrolling | 132 ms | 112 ms | 128 ms | 192 ms | 380 ms | 198 ms |
+| scrolling_bottom_region | 130 ms | 114 ms | 120 ms | 175 ms | 384 ms | 187 ms |
+| scrolling_bottom_small_region | 127 ms | 115 ms | 122 ms | 183 ms | 345 ms | 197 ms |
+| scrolling_fullscreen | 6 ms | 12 ms | 27 ms | 13 ms | 28 ms | 16 ms |
+| scrolling_top_region | 127 ms | 115 ms | 122 ms | 212 ms | 330 ms | 231 ms |
+| scrolling_top_small_region | 127 ms | 114 ms | 121 ms | 188 ms | 346 ms | 204 ms |
+| sync_medium_cells | 9 ms | 16 ms | 10 ms | 17 ms | 36 ms | 17 ms |
+| unicode | 16 ms | 9 ms | 3 ms | 36 ms | 129 ms | 30 ms |
+| **Total** | **740 ms** | **673 ms** | **706 ms** | **1142 ms** | **3281 ms** | **1247 ms** |
 
 The GPU terminals lead on pure PTY read throughput. Reliabilitty is about 4x
 faster than st overall, ahead of both VTE terminals, and close to the GPU
