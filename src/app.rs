@@ -1412,6 +1412,7 @@ impl App {
             damage.rows = vec![true; self.terminal.height()];
         }
         if damage.is_empty() {
+            self.terminal.recycle_damage(damage);
             return;
         }
         let cursor_on = if self.focused {
@@ -1461,6 +1462,7 @@ impl App {
         }
         self.x11
             .present(&self.canvas, &present_damage, self.cell_height, origin_y);
+        self.terminal.recycle_damage(present_damage);
         self.rendered_once = true;
         if self.smoke && self.rendered_once {
             self.quit = true;

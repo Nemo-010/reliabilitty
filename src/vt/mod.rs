@@ -361,6 +361,7 @@ pub struct Terminal {
     clipboard_read: Option<u8>,
     scroll_offset: usize,
     dirty: Vec<bool>,
+    spare_dirty: Vec<bool>,
     dirty_all: bool,
     pending_scroll: i32,
     line_id_next: u64,
@@ -438,6 +439,7 @@ impl Terminal {
             clipboard_read: None,
             scroll_offset: 0,
             dirty: vec![false; rows],
+            spare_dirty: Vec::new(),
             dirty_all: true,
             pending_scroll: 0,
             line_id_next: 0,
@@ -1306,9 +1308,18 @@ impl Terminal {
 
     pub fn take_damage(&mut self) -> Damage {
         let all = std::mem::take(&mut self.dirty_all);
-        let rows = std::mem::replace(&mut self.dirty, vec![false; self.rows]);
         let scroll = std::mem::take(&mut self.pending_scroll);
+        let rows = std::mem::take(&mut self.dirty);
+        // Refill the dirty array from the recycled buffer instead of allocating.
+        self.dirty = std::mem::take(&mut self.spare_dirty);
+        self.dirty.clear();
+        self.dirty.resize(self.rows, false);
         Damage { all, rows, scroll }
+    }
+
+    /// Returns a consumed damage buffer so its allocation can be reused.
+    pub fn recycle_damage(&mut self, damage: Damage) {
+        self.spare_dirty = damage.rows;
     }
 
     pub fn has_damage(&self) -> bool {
@@ -1374,6 +1385,37 @@ impl Terminal {
     }
 
     fn print(&mut self, ch: char) {
+        // Fast path for the common case: printable ASCII in the normal charset,
+        // no wrap pending, no insert mode, and room for one cell on this line.
+        if ch.is_ascii()
+            && self.single_shift.is_none()
+            && self.charsets[self.active_charset] == Charset::Ascii
+            && !self.wrap_pending
+            && !self.insert_mode
+            && self.cursor.x + 1 < self.cols
+        {
+            let y = self.cursor.y;
+            let x = self.cursor.x;
+            let (fg, bg, attrs) = (self.pen.fg, self.pen.bg, self.pen.attrs);
+            let line = self.line_mut(y);
+            if line.cells[x].width == 1 {
+                line.cells[x] = Cell {
+                    ch,
+                    extra: 0,
+                    fg,
+                    bg,
+                    attrs,
+                    width: 1,
+                };
+                line.mark_written_range(x, x);
+                line.wrapped = false;
+                self.last_printed = Some((y, x));
+                self.last_graphic = ch;
+                self.mark_row(y);
+                self.cursor.x = x + 1;
+                return;
+            }
+        }
         let ch = self.map_charset(ch);
         let width = ch.width().unwrap_or(0);
         if width == 0 {
@@ -1797,6 +1839,28 @@ impl Terminal {
     }
 
     fn scroll_up(&mut self, count: usize) {
+        // Single-line full-screen scroll with history is the common case in
+        // streaming output. Skip the general region machinery entirely.
+        if count == 1
+            && self.scroll_top == 0
+            && self.scroll_bottom + 1 == self.rows
+            && self.scroll_offset == 0
+            && self.region_offset == 0
+            && self.alt.is_none()
+            && self.history != 0
+            && self.scrollback.len() == self.history
+        {
+            let removed = self.main.pop_front().unwrap();
+            self.scrollback.push_back(removed);
+            let mut line = self.scrollback.pop_front().unwrap();
+            let id = self.next_line_id();
+            blank_in_place(&mut line, id);
+            self.main.push_back(line);
+            self.pending_scroll += 1;
+            self.dirty.copy_within(1.., 0);
+            *self.dirty.last_mut().unwrap() = true;
+            return;
+        }
         self.scroll_region_up(self.scroll_top, self.scroll_bottom, count, true);
     }
 

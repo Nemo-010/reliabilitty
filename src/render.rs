@@ -467,6 +467,17 @@ impl Renderer {
                 if cell.width == 0 {
                     continue;
                 }
+                // The row fill already painted default-background blanks with
+                // no attributes; redrawing them only repeats work.
+                if cell.ch == ' '
+                    && cell.extra == 0
+                    && cell.bg == Color::Default
+                    && cell.attrs == Attrs::default()
+                    && !has_selection
+                    && highlights.is_empty()
+                {
+                    continue;
+                }
                 let selected = has_selection && terminal.is_selected(line.id, col);
                 let highlight = highlights
                     .iter()
@@ -769,13 +780,14 @@ impl Renderer {
             font: glyph.font,
             glyph: glyph.glyph,
         };
-        if !self.glyph_cache.contains_key(&key) {
-            if self.glyph_cache.len() > 65536 {
-                self.glyph_cache.clear();
-            }
-            let bitmap = self.rasterize_uncached(glyph);
-            self.glyph_cache.insert(key, bitmap);
+        if let Some(cached) = self.glyph_cache.get(&key) {
+            return cached.as_ref();
         }
+        if self.glyph_cache.len() > 65536 {
+            self.glyph_cache.clear();
+        }
+        let bitmap = self.rasterize_uncached(glyph);
+        self.glyph_cache.insert(key, bitmap);
         self.glyph_cache.get(&key).and_then(Option::as_ref)
     }
 
