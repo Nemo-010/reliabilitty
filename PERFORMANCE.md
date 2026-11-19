@@ -1,11 +1,12 @@
 # Performance
 
 A simple benchmark of Reliabilitty against st, xfce4-terminal, Ptyxis,
-Alacritty and Ghostty. The numbers are indicative, not a full benchmark suite.
+Alacritty, Ghostty and foot. The numbers are indicative, not a full benchmark
+suite.
 
 ## Environment
 
-- Artix Linux, kernel 7.2.15-artix1-1, X11 with i3 and a compositor.
+- Artix Linux, kernel 7.3.4-artix1-2, X11 with i3 and a compositor.
 - CPU: Intel Xeon E5-1650 v4 @ 3.60 GHz.
 - GPU: AMD Radeon RX 580 2048SP.
 - Real desktop session, one terminal running at a time.
@@ -13,14 +14,19 @@ Alacritty and Ghostty. The numbers are indicative, not a full benchmark suite.
   Ptyxis also get a private D-Bus session so their real settings cannot leak in
   through xfconf or GSettings. Ghostty behaves very differently with the real
   config; see "Ghostty and GTK4" below.
+- foot is Wayland only and was run on the compositor at
+  [12to11](https://github.com/fish4terrisa-MSDSM/12to11). Cross-checks with
+  Alacritty on both 12to11 and plain X11 showed no significant difference in
+  any metric, so the Wayland results are comparable to the X11 ones.
 - Same machine for every run.
 
 ## Versions
 
 | Terminal | Version | Renderer |
 |---|---|---|
-| Reliabilitty | 0.1.11 | CPU, swash |
+| Reliabilitty | 0.1.12 | CPU, swash |
 | Alacritty | 0.17.0 | GPU, OpenGL |
+| foot | 1.28.0 | CPU, fcft |
 | Ghostty | 1.4.0-arch1 | GPU, OpenGL |
 | Ptyxis | 50.1 | GPU, GTK4/VTE |
 | st | 0.9.3 | CPU, Xft |
@@ -35,9 +41,12 @@ Alacritty and Ghostty. The numbers are indicative, not a full benchmark suite.
 - Draw time: spawn until a marker written by the child after printing 10000
   lines and hiding the cursor appears. This measures how fast the terminal
   processes the output through the PTY. Median of 10 runs.
-- CPU: user plus system CPU time of the whole process tree, from spawn until
-  the draw marker appears, measured with `getrusage(RUSAGE_CHILDREN)`. The
-  percentage is that CPU time divided by the draw time. Median of 10 runs.
+- CPU: user plus system CPU time of the process tree, from just after spawn
+  until the draw marker appears, sampled from `/proc/<pid>/stat`. The baseline
+  is taken once the child exists, and only that process tree is tracked, so
+  this also works for foot whose rendering runs under 12to11. The percentage
+  is that CPU time divided by the draw time. Values are quantised to 10 ms by
+  the kernel clock tick. Median of 10 runs.
 
 ## Results
 
@@ -45,76 +54,83 @@ Alacritty and Ghostty. The numbers are indicative, not a full benchmark suite.
 
 | # | Terminal | Launch time |
 |--:|---|---:|
-| 1 | Reliabilitty | 16.1 ms |
-| 2 | st | 44.5 ms |
-| 3 | Alacritty | 142.1 ms |
-| 4 | xfce4-terminal | 143.3 ms |
-| 5 | Ghostty | 198.9 ms |
-| 6 | Ptyxis | 302.7 ms |
+| 1 | Reliabilitty | 15.5 ms |
+| 2 | foot | 25.7 ms |
+| 3 | st | 48.4 ms |
+| 4 | Alacritty | 132.6 ms |
+| 5 | xfce4-terminal | 164.0 ms |
+| 6 | Ghostty | 190.2 ms |
+| 7 | Ptyxis | 312.0 ms |
 
 ### RSS
 
 | # | Terminal | RSS |
 |--:|---|---:|
-| 1 | st | 15.3 MiB |
-| 2 | Reliabilitty | 28.9 MiB |
-| 3 | xfce4-terminal | 79.4 MiB |
-| 4 | Alacritty | 94.0 MiB |
-| 5 | Ptyxis | 136.6 MiB |
-| 6 | Ghostty | 150.3 MiB |
+| 1 | st | 15.2 MiB |
+| 2 | foot | 23.6 MiB |
+| 3 | Reliabilitty | 29.2 MiB |
+| 4 | xfce4-terminal | 79.7 MiB |
+| 5 | Alacritty | 95.5 MiB |
+| 6 | Ptyxis | 138.1 MiB |
+| 7 | Ghostty | 151.8 MiB |
 
 ### PSS
 
 | # | Terminal | PSS |
 |--:|---|---:|
-| 1 | st | 4.8 MiB |
-| 2 | Reliabilitty | 24.3 MiB |
-| 3 | xfce4-terminal | 32.1 MiB |
-| 4 | Alacritty | 59.5 MiB |
-| 5 | Ptyxis | 84.2 MiB |
-| 6 | Ghostty | 106.7 MiB |
+| 1 | st | 5.6 MiB |
+| 2 | foot | 11.0 MiB |
+| 3 | Reliabilitty | 24.7 MiB |
+| 4 | xfce4-terminal | 32.9 MiB |
+| 5 | Alacritty | 46.3 MiB |
+| 6 | Ptyxis | 70.1 MiB |
+| 7 | Ghostty | 92.9 MiB |
 
 ### 10000 lines
 
 | # | Terminal | Draw time |
 |--:|---|---:|
 | 1 | Reliabilitty | 36.5 ms |
-| 2 | st | 47.6 ms |
-| 3 | Alacritty | 135.3 ms |
-| 4 | xfce4-terminal | 164.7 ms |
-| 5 | Ghostty | 285.2 ms |
-| 6 | Ptyxis | 372.1 ms |
+| 2 | foot | 41.3 ms |
+| 3 | st | 46.6 ms |
+| 4 | Alacritty | 141.6 ms |
+| 5 | xfce4-terminal | 172.7 ms |
+| 6 | Ghostty | 278.9 ms |
+| 7 | Ptyxis | 315.9 ms |
 
 ### CPU while drawing 10000 lines
 
 | # | Terminal | CPU time | CPU / wall |
 |--:|---|---:|---:|
-| 1 | Reliabilitty | 7.2 ms | 17.7% |
-| 2 | st | 24.8 ms | 54.8% |
-| 3 | Alacritty | 76.4 ms | 54.9% |
-| 4 | xfce4-terminal | 80.9 ms | 48.9% |
-| 5 | Ghostty | 115.5 ms | 40.3% |
-| 6 | Ptyxis | 183.7 ms | 49.0% |
+| 1 | Reliabilitty | 20 ms | 51.6% |
+| 2 | st | 25 ms | 52.3% |
+| 3 | foot | 35 ms | 85.1% |
+| 4 | Alacritty | 110 ms | 81.7% |
+| 5 | xfce4-terminal | 130 ms | 65.9% |
+| 6 | Ptyxis | 280 ms | 69.4% |
+| 7 | Ghostty | 290 ms | 100.9% |
 
-Reliabilitty processes the text fastest and uses the least CPU: 7.2 ms versus
-23.3 ms for st and 74.5-183.7 ms for the GPU terminals. Ptyxis is the slowest
-and heaviest of the group despite its GTK4 stack.
+Reliabilitty processes the text fastest and uses the least CPU: 20 ms versus
+25 ms for st and 110-290 ms for the GPU terminals. foot uses 35 ms, roughly
+half of a CPU core more than st. Ptyxis and Ghostty are the heaviest of the
+group despite their GTK4 stacks.
 
 ## Combined
 
 | Terminal | Launch | RSS | PSS | Draw | CPU |
 |---|---:|---:|---:|---:|---:|
-| Reliabilitty | 16.1 ms | 28.9 MiB | 24.3 MiB | 36.5 ms | 7.2 ms (17.7%) |
-| Alacritty | 142.1 ms | 94.0 MiB | 59.5 MiB | 135.3 ms | 76.4 ms (54.9%) |
-| Ghostty | 198.9 ms | 150.3 MiB | 106.7 MiB | 285.2 ms | 115.5 ms (40.3%) |
-| Ptyxis | 302.7 ms | 136.6 MiB | 84.2 MiB | 372.1 ms | 183.7 ms (49.0%) |
-| st | 44.5 ms | 15.3 MiB | 4.8 MiB | 47.6 ms | 24.8 ms (54.8%) |
-| xfce4-terminal | 143.3 ms | 79.4 MiB | 32.1 MiB | 164.7 ms | 80.9 ms (48.9%) |
+| Reliabilitty | 15.5 ms | 29.2 MiB | 24.7 MiB | 36.5 ms | 20 ms (51.6%) |
+| Alacritty | 132.6 ms | 95.5 MiB | 46.3 MiB | 141.6 ms | 110 ms (81.7%) |
+| foot | 25.7 ms | 23.6 MiB | 11.0 MiB | 41.3 ms | 35 ms (85.1%) |
+| Ghostty | 190.2 ms | 151.8 MiB | 92.9 MiB | 278.9 ms | 290 ms (100.9%) |
+| Ptyxis | 312.0 ms | 138.1 MiB | 70.1 MiB | 315.9 ms | 280 ms (69.4%) |
+| st | 48.4 ms | 15.2 MiB | 5.6 MiB | 46.6 ms | 25 ms (52.3%) |
+| xfce4-terminal | 164.0 ms | 79.7 MiB | 32.9 MiB | 172.7 ms | 130 ms (65.9%) |
 
 Reliabilitty is fastest to launch, draws text fastest, and uses the least CPU:
 it launches about 9x faster than Alacritty, draws about 4x faster, and uses
-about one tenth of the CPU. st wins RSS and PSS because it is a smaller C
-process. Ptyxis is the slowest and heaviest of the group.
+about one fifth of the CPU. st wins RSS and PSS because it is a smaller C
+process. Ghostty and Ptyxis are the slowest and heaviest of the group.
 
 Reliabilitty uses about twice the memory it did before switching to mimalloc
 as the global allocator (roughly 14 -> 29 MiB RSS). mimalloc reserves arena
@@ -122,7 +138,7 @@ memory up front; this is the main cost of the allocator change and is why st
 now has a clear edge on RSS and PSS.
 
 The GPU terminals remain slightly ahead only on raw PTY read throughput: their
-vtebench totals are 673 ms and 706 ms versus Reliabilitty's 740 ms. On launch,
+vtebench totals are 659 ms and 717 ms versus Reliabilitty's 720 ms. On launch,
 draw time and CPU use they are several times slower. That does not make GPU
 rendering useless in every case, but for a normal terminal workload the CPU
 path is already cheap enough that the extra machinery buys very little.
@@ -136,33 +152,34 @@ numbers are separate from the draw and CPU results above. Each terminal ran
 the full suite with the default settings (1 MiB minimum sample, 10 seconds per
 benchmark). Values are mean milliseconds; lower is better.
 
-| Benchmark | Reliabilitty | Alacritty | Ghostty | Ptyxis | st | xfce4-terminal |
-|---|---:|---:|---:|---:|---:|---:|
-| cursor_motion | 9 ms | 12 ms | 9 ms | 20 ms | 52 ms | 18 ms |
-| dense_cells | 41 ms | 32 ms | 33 ms | 85 ms | 1190 ms | 125 ms |
-| light_cells | 6 ms | 10 ms | 2 ms | 6 ms | 25 ms | 7 ms |
-| medium_cells | 9 ms | 12 ms | 10 ms | 15 ms | 34 ms | 18 ms |
-| scrolling | 132 ms | 112 ms | 128 ms | 192 ms | 380 ms | 198 ms |
-| scrolling_bottom_region | 130 ms | 114 ms | 120 ms | 175 ms | 384 ms | 187 ms |
-| scrolling_bottom_small_region | 127 ms | 115 ms | 122 ms | 183 ms | 345 ms | 197 ms |
-| scrolling_fullscreen | 6 ms | 12 ms | 27 ms | 13 ms | 28 ms | 16 ms |
-| scrolling_top_region | 127 ms | 115 ms | 122 ms | 212 ms | 330 ms | 231 ms |
-| scrolling_top_small_region | 127 ms | 114 ms | 121 ms | 188 ms | 346 ms | 204 ms |
-| sync_medium_cells | 9 ms | 16 ms | 10 ms | 17 ms | 36 ms | 17 ms |
-| unicode | 16 ms | 9 ms | 3 ms | 36 ms | 129 ms | 30 ms |
-| **Total** | **740 ms** | **673 ms** | **706 ms** | **1142 ms** | **3281 ms** | **1247 ms** |
+| Benchmark | Reliabilitty | Alacritty | foot | Ghostty | Ptyxis | st | xfce4-terminal |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| cursor_motion | 8 ms | 12 ms | 7 ms | 9 ms | 19 ms | 52 ms | 19 ms |
+| dense_cells | 38 ms | 32 ms | 68 ms | 33 ms | 103 ms | 1006 ms | 122 ms |
+| light_cells | 6 ms | 10 ms | 8 ms | 2 ms | 6 ms | 25 ms | 7 ms |
+| medium_cells | 8 ms | 11 ms | 16 ms | 10 ms | 17 ms | 34 ms | 19 ms |
+| scrolling | 126 ms | 111 ms | 132 ms | 130 ms | 206 ms | 385 ms | 214 ms |
+| scrolling_bottom_region | 127 ms | 110 ms | 125 ms | 122 ms | 188 ms | 389 ms | 206 ms |
+| scrolling_bottom_small_region | 126 ms | 113 ms | 126 ms | 121 ms | 197 ms | 347 ms | 208 ms |
+| scrolling_fullscreen | 6 ms | 12 ms | 7 ms | 27 ms | 17 ms | 29 ms | 15 ms |
+| scrolling_top_region | 124 ms | 113 ms | 126 ms | 125 ms | 229 ms | 341 ms | 243 ms |
+| scrolling_top_small_region | 125 ms | 112 ms | 128 ms | 125 ms | 198 ms | 349 ms | 224 ms |
+| sync_medium_cells | 9 ms | 13 ms | 14 ms | 10 ms | 18 ms | 36 ms | 19 ms |
+| unicode | 17 ms | 9 ms | 26 ms | 3 ms | 32 ms | 218 ms | 48 ms |
+| **Total** | **720 ms** | **659 ms** | **783 ms** | **717 ms** | **1230 ms** | **3212 ms** | **1344 ms** |
 
 Alacritty and Ghostty lead on pure PTY read throughput, but only by a narrow
-margin: 673 ms and 706 ms in total versus Reliabilitty's 740 ms. Reliabilitty
-is about 4x faster than st overall, ahead of both VTE terminals, and leads the
-GPU terminals decisively on launch time, draw time and CPU use.
+margin: 659 ms and 717 ms in total versus Reliabilitty's 720 ms. Reliabilitty
+is about 4x faster than st overall, ahead of both VTE terminals and foot, and
+leads the GPU terminals decisively on launch time, draw time and CPU use.
 
 ## Ghostty and GTK4
 
 The tables above use a clean config so every terminal starts on the same
 footing. With the real config, Ghostty alone takes about 1.7 s to launch
 versus ~180 ms clean; the others do not use GTK4 (st: Xlib, Alacritty:
-winit/glutin, Reliabilitty: x11rb, xfce4-terminal: GTK3) and are unaffected.
+winit/glutin, Reliabilitty: x11rb, xfce4-terminal: GTK3, foot: fcft/Wayland)
+and are unaffected.
 
 The cause is a GTK4 bug, not Ghostty: `GApplication::startup` does a themed
 window-icon lookup that loads the whole icon theme, and its cache parser is

@@ -51,21 +51,22 @@ It is meant to be a terminal emulator that you can count on to always launch!
 
 ## Feature comparison
 
-| Feature | Reliabilitty | Alacritty | Ghostty | Ptyxis | st | xfce4-terminal |
-| --- | --- | --- | --- | --- | --- | --- |
-| Config file | rtty.conf | TOML | key=value | GUI settings | needs patch | GUI settings |
-| Live reload | yes | yes | yes | yes | no | yes |
-| Env overrides | yes | no | no | no | no | no |
-| Scrollback | yes | yes | yes | yes | needs patch | yes |
-| Scrollbar | yes | no | yes | yes | needs patch | yes |
-| Truecolor | yes | yes | yes | yes | needs patch | yes |
-| Transparency | yes, background | yes, whole window incl. text | yes, background | yes, background | needs patch | yes, background |
-| Mouse reporting | yes | yes | yes | yes | yes | yes |
-| OSC 52 clipboard | yes | yes | yes | no | needs patch | no |
-| Search | yes | yes | yes | yes | no | yes |
-| Vi mode | no | yes | yes | no | no | no |
-| Ligatures | no | no | yes | no | no | no |
-| Kitty keyboard protocol | yes, disambiguation | yes | yes | no | no | no |
+| Feature | Reliabilitty | Alacritty | foot | Ghostty | Ptyxis | st | xfce4-terminal |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Config file | rtty.conf | TOML | foot.ini | key=value | GUI settings | needs patch | GUI settings |
+| Live reload | yes | yes | no | yes | yes | no | yes |
+| Configurable via env variables | yes | no | no | no | no | no | no |
+| Scrollback | yes | yes | yes | yes | yes | needs patch | yes |
+| Scrollbar | yes | no | no | yes | yes | needs patch | yes |
+| Truecolor | yes | yes | yes | yes | yes | needs patch | yes |
+| Transparency | yes, background | yes, whole window incl. text | yes, background | yes, background | yes, background | needs patch | yes, background |
+| Mouse reporting | yes | yes | yes | yes | yes | yes | yes |
+| OSC 52 clipboard | yes | yes | yes | yes | no | needs patch | no |
+| Search | yes | yes | yes | yes | yes | no | yes |
+| Vi mode | no | yes | no | yes | no | no | no |
+| Ligatures | no | no | no | yes | no | no | no |
+| Kitty keyboard protocol | yes, disambiguation | yes | yes | yes | no | no | no |
+| Wayland | no | yes | yes | yes | yes | no | yes |
+| X11 | yes | yes | no | yes | yes | yes | yes |
 
 See [PERFORMANCE.md](PERFORMANCE.md) for benchmarks.
-
