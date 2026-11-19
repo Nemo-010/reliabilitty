@@ -26,11 +26,11 @@ suite.
 |---|---|---|
 | Reliabilitty | 0.1.12 | CPU, swash |
 | Alacritty | 0.17.0 | GPU, OpenGL |
+| foot | 1.28.0 | CPU, fcft |
 | Ghostty | 1.4.0-arch1 | GPU, OpenGL |
 | Ptyxis | 50.1 | GPU, GTK4/VTE |
 | st | 0.9.3 | CPU, Xft |
 | xfce4-terminal | 1.2.0 | CPU, VTE |
-| foot | 1.28.0 | CPU, fcft |
 
 ## Method
 
@@ -120,11 +120,11 @@ the slowest and heaviest of the group despite its GTK4 stack.
 |---|---:|---:|---:|---:|---:|
 | Reliabilitty | 15.5 ms | 29.2 MiB | 24.7 MiB | 36.5 ms | 8.4 ms (23.0%) |
 | Alacritty | 132.6 ms | 95.5 MiB | 46.3 MiB | 141.6 ms | 80.1 ms (55.6%) |
+| foot | 25.7 ms | 23.6 MiB | 11.0 MiB | 41.3 ms | 55.0 ms (133.0%) |
 | Ghostty | 190.2 ms | 151.8 MiB | 92.9 MiB | 278.9 ms | 113.4 ms (41.2%) |
 | Ptyxis | 312.0 ms | 138.1 MiB | 70.1 MiB | 315.9 ms | 145.0 ms (46.3%) |
 | st | 48.4 ms | 15.2 MiB | 5.6 MiB | 46.6 ms | 24.4 ms (52.2%) |
 | xfce4-terminal | 164.0 ms | 79.7 MiB | 32.9 MiB | 172.7 ms | 85.2 ms (49.0%) |
-| foot | 25.7 ms | 23.6 MiB | 11.0 MiB | 41.3 ms | 55.0 ms (133.0%) |
 
 Reliabilitty is fastest to launch, draws text fastest, and uses the least CPU:
 it launches about 9x faster than Alacritty, draws about 4x faster, and uses
@@ -151,21 +151,21 @@ numbers are separate from the draw and CPU results above. Each terminal ran
 the full suite with the default settings (1 MiB minimum sample, 10 seconds per
 benchmark). Values are mean milliseconds; lower is better.
 
-| Benchmark | Reliabilitty | Alacritty | Ghostty | foot | Ptyxis | st | xfce4-terminal |
+| Benchmark | Reliabilitty | Alacritty | foot | Ghostty | Ptyxis | st | xfce4-terminal |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| cursor_motion | 8 ms | 12 ms | 9 ms | 7 ms | 19 ms | 52 ms | 19 ms |
-| dense_cells | 38 ms | 32 ms | 33 ms | 68 ms | 103 ms | 1006 ms | 122 ms |
-| light_cells | 6 ms | 10 ms | 2 ms | 8 ms | 6 ms | 25 ms | 7 ms |
-| medium_cells | 8 ms | 11 ms | 10 ms | 16 ms | 17 ms | 34 ms | 19 ms |
-| scrolling | 126 ms | 111 ms | 130 ms | 132 ms | 206 ms | 385 ms | 214 ms |
-| scrolling_bottom_region | 127 ms | 110 ms | 122 ms | 125 ms | 188 ms | 389 ms | 206 ms |
-| scrolling_bottom_small_region | 126 ms | 113 ms | 121 ms | 126 ms | 197 ms | 347 ms | 208 ms |
-| scrolling_fullscreen | 6 ms | 12 ms | 27 ms | 7 ms | 17 ms | 29 ms | 15 ms |
-| scrolling_top_region | 124 ms | 113 ms | 125 ms | 126 ms | 229 ms | 341 ms | 243 ms |
-| scrolling_top_small_region | 125 ms | 112 ms | 125 ms | 128 ms | 198 ms | 349 ms | 224 ms |
-| sync_medium_cells | 9 ms | 13 ms | 10 ms | 14 ms | 18 ms | 36 ms | 19 ms |
-| unicode | 17 ms | 9 ms | 3 ms | 26 ms | 32 ms | 218 ms | 48 ms |
-| **Total** | **720 ms** | **659 ms** | **717 ms** | **783 ms** | **1230 ms** | **3212 ms** | **1344 ms** |
+| cursor_motion | 8 ms | 12 ms | 7 ms | 9 ms | 19 ms | 52 ms | 19 ms |
+| dense_cells | 38 ms | 32 ms | 68 ms | 33 ms | 103 ms | 1006 ms | 122 ms |
+| light_cells | 6 ms | 10 ms | 8 ms | 2 ms | 6 ms | 25 ms | 7 ms |
+| medium_cells | 8 ms | 11 ms | 16 ms | 10 ms | 17 ms | 34 ms | 19 ms |
+| scrolling | 126 ms | 111 ms | 132 ms | 130 ms | 206 ms | 385 ms | 214 ms |
+| scrolling_bottom_region | 127 ms | 110 ms | 125 ms | 122 ms | 188 ms | 389 ms | 206 ms |
+| scrolling_bottom_small_region | 126 ms | 113 ms | 126 ms | 121 ms | 197 ms | 347 ms | 208 ms |
+| scrolling_fullscreen | 6 ms | 12 ms | 7 ms | 27 ms | 17 ms | 29 ms | 15 ms |
+| scrolling_top_region | 124 ms | 113 ms | 126 ms | 125 ms | 229 ms | 341 ms | 243 ms |
+| scrolling_top_small_region | 125 ms | 112 ms | 128 ms | 125 ms | 198 ms | 349 ms | 224 ms |
+| sync_medium_cells | 9 ms | 13 ms | 14 ms | 10 ms | 18 ms | 36 ms | 19 ms |
+| unicode | 17 ms | 9 ms | 26 ms | 3 ms | 32 ms | 218 ms | 48 ms |
+| **Total** | **720 ms** | **659 ms** | **783 ms** | **717 ms** | **1230 ms** | **3212 ms** | **1344 ms** |
 
 Alacritty and Ghostty lead on pure PTY read throughput, but only by a narrow
 margin: 659 ms and 717 ms in total versus Reliabilitty's 720 ms. Reliabilitty
