@@ -1,4 +1,18 @@
 
+## [0.1.12](https://github.com/pkgforge-apps/reliabilitty/compare/v0.1.11...v0.1.12) - 2026-11-19
+
+### Bug Fixes
+
+- Compile on stable and restrict print fast path - ([dde4c46](https://github.com/pkgforge-apps/reliabilitty/commit/dde4c46105135b432cf1474286d1a1540170fba9))
+
+### Documentation
+
+- Benchmark v0.1.11 across six terminals ([#22](https://github.com/pkgforge-apps/reliabilitty/pull/22)) - ([3a0209f](https://github.com/pkgforge-apps/reliabilitty/commit/3a0209fde11c70c861a26f339a6a5926e45ad990))
+
+### Performance
+
+- Fast-path ASCII printing, single-line scrolling and blank cells - ([7734517](https://github.com/pkgforge-apps/reliabilitty/commit/77345175f49f8afee50c4977d35aece7eab9e3a5))
+
 ## [0.1.11](https://github.com/pkgforge-apps/reliabilitty/compare/v0.1.10...v0.1.11) - 2026-11-19
 
 ### Features
