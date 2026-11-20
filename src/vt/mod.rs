@@ -1668,6 +1668,89 @@ impl Terminal {
         }
     }
 
+    /// Prints text made of printable ASCII and non-combining width one or two
+    /// characters without per-character dispatch. Anything else goes through
+    /// `print`, so the result is identical to calling `print` per character.
+    pub fn print_text_run(&mut self, text: &str) {
+        if self.insert_mode
+            || self.charsets[self.active_charset] != Charset::Ascii
+            || self.single_shift.is_some()
+        {
+            for ch in text.chars() {
+                self.print(ch);
+            }
+            return;
+        }
+        let cols = self.cols;
+        let mut rest = text.chars().peekable();
+        while let Some(&first) = rest.peek() {
+            if self.wrap_pending {
+                self.print(first);
+                rest.next();
+                continue;
+            }
+            let y = self.cursor.y;
+            let start = self.cursor.x;
+            let (fg, bg, attrs) = (self.pen.fg, self.pen.bg, self.pen.attrs);
+            let mut x = start;
+            let mut last = None;
+            let mut last_x = start;
+            {
+                let line = self.line_mut(y);
+                while let Some(&ch) = rest.peek() {
+                    let width = if ch.is_ascii() {
+                        1
+                    } else {
+                        ch.width().unwrap_or(0)
+                    };
+                    if (width != 1 && width != 2)
+                        || x + width >= cols
+                        || line.cells[x].width != 1
+                        || (width == 2 && line.cells[x + 1].width != 1)
+                    {
+                        break;
+                    }
+                    let cell = Cell {
+                        ch,
+                        extra: 0,
+                        fg,
+                        bg,
+                        attrs,
+                        width: width as u8,
+                    };
+                    line.cells[x] = cell;
+                    if width == 2 {
+                        line.cells[x + 1] = Cell {
+                            ch: ' ',
+                            width: 0,
+                            ..cell
+                        };
+                    }
+                    last = Some(ch);
+                    last_x = x;
+                    x += width;
+                    rest.next();
+                }
+                if last.is_some() {
+                    line.mark_written_range(start, x - 1);
+                    line.wrapped = false;
+                }
+            }
+            match last {
+                Some(ch) => {
+                    self.last_printed = Some((y, last_x));
+                    self.last_graphic = ch;
+                    self.mark_row(y);
+                    self.cursor.x = x;
+                }
+                None => {
+                    self.print(first);
+                    rest.next();
+                }
+            }
+        }
+    }
+
     fn add_combining(&mut self, ch: char) {
         let (y, x) = match self.last_printed {
             Some(position) => position,
@@ -2979,6 +3062,114 @@ mod tests {
         for text in ["", "a", "ab", "abc", "hello world"] {
             let encoded = base64_encode(text.as_bytes());
             assert_eq!(base64_decode(&encoded).unwrap(), text.as_bytes());
+        }
+    }
+}
+#[cfg(test)]
+mod textrun_equiv {
+    use super::*;
+    fn dump(t: &Terminal) -> String {
+        let mut o = format!(
+            "{:?} {} {:?} {:?} {:?} {} ",
+            (t.cursor.x, t.cursor.y),
+            t.wrap_pending,
+            t.last_printed,
+            t.dirty,
+            t.region_offset,
+            t.last_graphic
+        );
+        for r in 0..t.rows {
+            let l = &t.lines()[r];
+            o.push_str(&format!("[w{} ", l.wrapped));
+            for c in &l.cells {
+                o.push_str(&format!(
+                    "{}:{}:{}:{:?}:{:?}",
+                    c.ch, c.width, c.extra, c.fg, c.bg
+                ));
+            }
+            o.push(']');
+        }
+        o
+    }
+    #[test]
+    fn text_run_matches_per_char_print() {
+        let samples = [
+            "a",
+            "\u{e9}",
+            "\u{4e2d}",
+            "\u{4e2d}\u{6587}\u{5b57}",
+            "a\u{e9}\u{4e2d}b",
+            "e\u{301}x",
+            "x\u{200d}y",
+            "\u{1f600}a\u{1f600}",
+            "ab\u{4e2d}c",
+            "\u{85}z",
+            "\u{2500}\u{2500}\u{2500}\u{2502}\u{2588}",
+            "\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}",
+        ];
+        for sample in samples {
+            for rep in [1usize, 3, 12] {
+                let text = sample.repeat(rep);
+                for start in 0..20usize {
+                    for (aw, pending, wide, ins, rows) in [
+                        (true, false, false, false, 3usize),
+                        (false, false, false, false, 3),
+                        (true, true, false, false, 3),
+                        (true, false, true, false, 3),
+                        (true, false, false, true, 3),
+                        (true, false, false, false, 2),
+                    ] {
+                        let mut a = Terminal::new(
+                            20,
+                            rows,
+                            100,
+                            Theme::from_config(&crate::config::ColorsConfig::default()).unwrap(),
+                            CursorStyle::Block,
+                            true,
+                        );
+                        let mut b = Terminal::new(
+                            20,
+                            rows,
+                            100,
+                            Theme::from_config(&crate::config::ColorsConfig::default()).unwrap(),
+                            CursorStyle::Block,
+                            true,
+                        );
+                        for t in [&mut a, &mut b] {
+                            t.autowrap = aw;
+                            t.insert_mode = ins;
+                            t.pen.bg = Color::Indexed(3);
+                            if wide {
+                                for _ in 0..8 {
+                                    t.print('\u{4e2d}');
+                                }
+                                t.cursor.x = 0;
+                                t.cursor.y = 0;
+                                t.wrap_pending = false;
+                            }
+                            t.cursor.x = start;
+                            t.wrap_pending = pending && start == 19;
+                        }
+                        for ch in text.chars() {
+                            a.print(ch);
+                        }
+                        b.print_text_run(&text);
+                        assert_eq!(
+                            dump(&a),
+                            dump(&b),
+                            "sample={sample:?} rep={rep} start={start} aw={aw} pend={pending} wide={wide} ins={ins} rows={rows}"
+                        );
+                        for r in 0..rows {
+                            a.line_mut(r).clear_written();
+                            b.line_mut(r).clear_written();
+                            assert!(
+                                b.lines()[r].cells.iter().all(Cell::is_blank),
+                                "stale row {r} sample={sample:?}"
+                            );
+                        }
+                    }
+                }
+            }
         }
     }
 }

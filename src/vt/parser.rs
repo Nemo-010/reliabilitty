@@ -163,12 +163,28 @@ impl Parser {
             }
             if matches!(self.state, State::Ground) && self.utf8.needed == 0 {
                 let start = index;
-                while index < bytes.len() && (0x20..=0x7e).contains(&bytes[index]) {
+                let mut ascii_only = true;
+                while index < bytes.len() && bytes[index] >= 0x20 && bytes[index] != 0x7f {
+                    ascii_only &= bytes[index] < 0x80;
                     index += 1;
                 }
-                if index - start >= 1 {
-                    terminal.print_ascii_run(&bytes[start..index]);
-                    continue;
+                if index > start {
+                    if ascii_only {
+                        terminal.print_ascii_run(&bytes[start..index]);
+                        continue;
+                    }
+                    let text = match std::str::from_utf8(&bytes[start..index]) {
+                        Ok(text) => text,
+                        Err(error) => {
+                            let valid = error.valid_up_to();
+                            std::str::from_utf8(&bytes[start..start + valid]).unwrap_or("")
+                        }
+                    };
+                    if !text.is_empty() {
+                        terminal.print_text_run(text);
+                        index = start + text.len();
+                        continue;
+                    }
                 }
                 index = start;
                 let b = bytes[index];
@@ -579,5 +595,32 @@ mod tests {
         parser.advance(&bytes[..1], &mut terminal);
         parser.advance(&bytes[1..], &mut terminal);
         assert_eq!(terminal.lines()[0].cells[0].ch, '\u{4e16}');
+    }
+
+    #[test]
+    fn text_run_split_at_every_byte_boundary_matches_whole() {
+        let text = "ab\u{e9}\u{4e16}\u{1f600}cd";
+        let bytes = text.as_bytes();
+        for split in 1..bytes.len() {
+            let mut whole = terminal();
+            let mut parser = Parser::new();
+            parser.advance(bytes, &mut whole);
+
+            let mut split_term = terminal();
+            let mut split_parser = Parser::new();
+            split_parser.advance(&bytes[..split], &mut split_term);
+            split_parser.advance(&bytes[split..], &mut split_term);
+
+            let cell_chars = |t: &Terminal| {
+                (0..t.rows)
+                    .flat_map(|r| t.lines()[r].cells.iter().map(|c| (c.ch, c.width)))
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(
+                cell_chars(&split_term),
+                cell_chars(&whole),
+                "split at {split}"
+            );
+        }
     }
 }
