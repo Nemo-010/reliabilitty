@@ -1,4 +1,10 @@
 
+## [0.1.14](https://github.com/pkgforge-apps/reliabilitty/compare/v0.1.13...v0.1.14) - 2026-11-20
+
+### Performance
+
+- Restore mimalloc as the global allocator ([#27](https://github.com/pkgforge-apps/reliabilitty/pull/27)) - ([d9ac555](https://github.com/pkgforge-apps/reliabilitty/commit/d9ac555373dea203238f6f590ef6776f7affcb69))
+
 ## [0.1.13](https://github.com/pkgforge-apps/reliabilitty/compare/v0.1.12...v0.1.13) - 2026-11-20
 
 ### Documentation
