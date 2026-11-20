@@ -172,6 +172,41 @@ inside the run-to-run spread. Reliabilitty is about 4.5x faster than st overall,
 ahead of both VTE terminals and foot, and leads the GPU terminals decisively on
 launch time, draw time and CPU use.
 
+## Frame rate (DOOM-fire)
+
+[DOOM-fire](https://github.com/const-void/DOOM-fire-zig) animates a fire in a
+grid of colored blocks and reports its own frame rate. That number counts the
+frames it writes to the PTY before the terminal reads them, so it measures PTY
+throughput under backpressure, not frames actually presented on screen. The
+tool's own README calls the figure unscientific. It is included here because
+issue #12 asked for frame rate to be measured alongside latency.
+
+Every terminal was configured for a 160x30 grid with its own font, so the fire
+fills the window and each run renders the same number of cells (reported grids
+were 157-160 by 30). Transparency was disabled and each terminal got a clean
+config, with a private D-Bus session for xfce4-terminal and Ptyxis. The relay
+drove DOOM-fire for 8 seconds; values are the median FPS it reported.
+
+| # | Terminal | FPS |
+|--:|---|---:|
+| 1 | foot | 1209 |
+| 2 | Reliabilitty | 1103 |
+| 3 | Alacritty | 1040 |
+| 4 | Ghostty | 876 |
+| 5 | Ptyxis | 338 |
+| 6 | xfce4-terminal | 243 |
+| 7 | st | 196 |
+
+These are indicative, not a strict ranking. The same 160x30 cells cover very
+different pixel areas because each terminal uses its own font: roughly
+960x390 for st and foot, up to 1440x660 for Alacritty and Ghostty. foot and
+Reliabilitty had the smallest windows, which flatters their numbers, while
+Alacritty and Ghostty painted about three times the pixels. The draw, CPU and
+vtebench results above are the better evidence for the speed claims.
+
+DOOM-fire's `mem:` line is the per-frame output buffer size (about 16 KiB
+minimum, 96 KiB average and 100 KiB maximum in these runs), not process RAM.
+
 ## Ghostty and GTK4
 
 The tables above use a clean config so every terminal starts on the same
