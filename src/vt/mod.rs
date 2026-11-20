@@ -1549,6 +1549,7 @@ impl Terminal {
                 let lines = self.lines_mut();
                 let mut x = x0;
                 let mut physical = map(start_y);
+                let mut row_start = x0;
                 for &byte in bytes {
                     let line = &mut lines[physical];
                     let old = line.cells[x];
@@ -1575,16 +1576,20 @@ impl Terminal {
                         attrs,
                         width: 1,
                     };
-                    line.mark_written(x);
                     line.wrapped = false;
                     x += 1;
                     if x == cols {
+                        line.mark_written_range(row_start, cols - 1);
                         x = 0;
+                        row_start = 0;
                         physical += 1;
                         if physical > region_bottom {
                             physical = region_top;
                         }
                     }
+                }
+                if x > 0 {
+                    lines[physical].mark_written_range(row_start, x - 1);
                 }
             }
             for row in start_y..=end_row {
@@ -2509,6 +2514,69 @@ mod tests {
                         "len={len} start={start} region={region}"
                     );
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn ascii_run_matches_print_with_flags_and_wide_overwrite() {
+        let snapshot = |t: &Terminal| {
+            let cells: Vec<Vec<(char, u8, Color, Color)>> = (0..t.rows)
+                .map(|row| {
+                    t.lines()[row]
+                        .cells
+                        .iter()
+                        .map(|c| (c.ch, c.width, c.fg, c.bg))
+                        .collect()
+                })
+                .collect();
+            (
+                cells,
+                (t.cursor.x, t.cursor.y),
+                t.wrap_pending,
+                t.last_printed,
+                t.last_graphic,
+                t.dirty.clone(),
+            )
+        };
+        for mode in 0..4 {
+            for len in 1..=9 {
+                let bytes: Vec<u8> = (0..len).map(|i| b'a' + (i as u8 % 26)).collect();
+                let mut slow = terminal(3);
+                let mut fast = terminal(3);
+                for t in [&mut slow, &mut fast] {
+                    if mode & 1 != 0 {
+                        t.autowrap = false;
+                    }
+                    if mode & 2 != 0 {
+                        t.wrap_pending = true;
+                    }
+                    // Non-default background pen and a pre-existing wide char
+                    // in the run's path.
+                    t.pen.bg = Color::Indexed(4);
+                    t.cursor.x = 2;
+                    t.lines_mut()[0].cells[3] = Cell {
+                        ch: '\u{4e16}',
+                        extra: 0,
+                        fg: Color::Default,
+                        bg: Color::Default,
+                        attrs: Attrs::default(),
+                        width: 2,
+                    };
+                    t.lines_mut()[0].cells[4] = Cell {
+                        ch: ' ',
+                        extra: 0,
+                        fg: Color::Default,
+                        bg: Color::Default,
+                        attrs: Attrs::default(),
+                        width: 0,
+                    };
+                }
+                for &b in &bytes {
+                    slow.print(b as char);
+                }
+                fast.print_ascii_run(&bytes);
+                assert_eq!(snapshot(&fast), snapshot(&slow), "mode={mode} len={len}");
             }
         }
     }
