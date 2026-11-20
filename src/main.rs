@@ -13,6 +13,9 @@ mod theme;
 mod vt;
 mod x11;
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn main() {
