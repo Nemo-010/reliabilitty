@@ -750,3 +750,99 @@ mod tests {
         assert_eq!(a.pen.attrs, b.pen.attrs);
     }
 }
+
+#[cfg(test)]
+mod fuzz_sgr {
+    use super::*;
+    use crate::theme::Theme;
+    use crate::vt::{CursorStyle, Terminal};
+
+    fn term() -> Terminal {
+        let theme = Theme::from_config(&crate::config::ColorsConfig::default()).unwrap();
+        Terminal::new(20, 4, 100, theme, CursorStyle::Block, true)
+    }
+
+    fn snap(t: &Terminal) -> String {
+        let mut out = format!(
+            "{:?}{:?}{:?}{} {}",
+            t.pen.fg, t.pen.bg, t.pen.attrs, t.cursor.x, t.cursor.y
+        );
+        for row in 0..t.rows {
+            for c in &t.lines()[row].cells {
+                out.push_str(&format!(
+                    "{}{:?}{:?}{:?}{}",
+                    c.ch, c.fg, c.bg, c.attrs, c.width
+                ));
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn sgr_fast_path_fuzz_matches_byte_at_a_time() {
+        let pieces: &[&[u8]] = &[
+            b"\x1b[",
+            b"\x1b[",
+            b"0",
+            b"1",
+            b"3",
+            b"4",
+            b"5",
+            b"8",
+            b"9",
+            b"2",
+            b";",
+            b";",
+            b":",
+            b"m",
+            b"m",
+            b"a",
+            b"b",
+            b"\x1b",
+            b"[",
+            b"?",
+            b"\n",
+            b"\r",
+            b" ",
+            b"6",
+            b"7",
+            b"\xc3\xa9",
+            b"\xe4\xb8\xad",
+            b"H",
+            b"K",
+            b"\x9b",
+            b"9999999999",
+        ];
+        let mut seed = 0x1234_5678_9abc_def0u64;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        for case in 0..20_000 {
+            let mut bytes = Vec::new();
+            for _ in 0..1 + next() % 24 {
+                bytes.extend_from_slice(pieces[(next() % pieces.len() as u64) as usize]);
+            }
+            let mut whole = term();
+            Parser::new().advance(&bytes, &mut whole);
+            let mut single = term();
+            let mut parser = Parser::new();
+            for &b in &bytes {
+                parser.advance(&[b], &mut single);
+            }
+            assert_eq!(snap(&whole), snap(&single), "case {case}: {bytes:?}");
+            let cut = (next() % (bytes.len() as u64 + 1)) as usize;
+            let mut split = term();
+            let mut parser = Parser::new();
+            parser.advance(&bytes[..cut], &mut split);
+            parser.advance(&bytes[cut..], &mut split);
+            assert_eq!(
+                snap(&split),
+                snap(&single),
+                "split case {case} cut {cut}: {bytes:?}"
+            );
+        }
+    }
+}
