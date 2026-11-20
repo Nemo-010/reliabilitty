@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -86,6 +87,7 @@ struct App {
     terminal: Terminal,
     parser: Parser,
     renderer: Renderer,
+    font_database: Arc<fontdb::Database>,
     canvas: Canvas,
     bindings: Bindings,
     signals: Signals,
@@ -192,7 +194,12 @@ pub fn run(cli: Cli) -> Result<(), String> {
     };
     x11.present(&canvas, &full, cell_height, 0);
 
-    let mut renderer = Renderer::new(&config.font, dpi, None)?;
+    let font_database = Arc::new({
+        let mut database = fontdb::Database::new();
+        database.load_system_fonts();
+        database
+    });
+    let mut renderer = Renderer::new(&config.font, dpi, None, font_database.clone())?;
     renderer.set_cursor_options(config.cursor.thickness, config.cursor.unfocused_hollow);
     cell_width = renderer.cell_width();
     cell_height = renderer.cell_height();
@@ -251,6 +258,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
         terminal,
         parser: Parser::new(),
         renderer,
+        font_database,
         canvas,
         bindings,
         signals,
@@ -1191,7 +1199,12 @@ impl App {
     }
 
     fn rebuild_renderer(&mut self) -> Result<(), String> {
-        let mut renderer = Renderer::new(&self.config.font, self.dpi, self.font_size_override)?;
+        let mut renderer = Renderer::new(
+            &self.config.font,
+            self.dpi,
+            self.font_size_override,
+            self.font_database.clone(),
+        )?;
         renderer.set_cursor_options(
             self.config.cursor.thickness,
             self.config.cursor.unfocused_hollow,
