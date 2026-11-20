@@ -78,7 +78,7 @@ The static binary still uses the fonts installed on the host. No font files are
 embedded and no FreeType/fontconfig runtime library is linked. The system font
 list is scanned once at startup and kept for the process lifetime, so fonts
 installed after launch are not picked up by a config reload or font-size change;
-restart to see newly installed fonts.
+relaunch the application to see newly installed fonts.
 
 Build needs only a Rust toolchain. The crate talks to X11 over the socket and
 does not link libX11.
