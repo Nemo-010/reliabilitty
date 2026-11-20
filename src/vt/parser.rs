@@ -113,6 +113,61 @@ fn parse_cursor_position(bytes: &[u8]) -> Option<(u32, u32, usize)> {
     Some((row, col, i + 1))
 }
 
+/// Parses a plain `ESC [ <digits> (;<digits>)* m` SGR into fixed arrays,
+/// matching the byte state machine's params/separators semantics. Returns the
+/// params, separators, count and bytes consumed. Anything with a private
+/// marker, intermediate, subparameter other than `;`, or non-SGR final falls
+/// back to the state machine.
+fn parse_sgr(bytes: &[u8]) -> Option<([u32; 32], [u8; 32], usize, usize)> {
+    if bytes.len() < 3 || bytes[0] != 0x1b || bytes[1] != b'[' {
+        return None;
+    }
+    let mut params = [0u32; 32];
+    let mut seps = [0u8; 32];
+    let mut count = 0usize;
+    let mut current = 0u32;
+    let mut current_set = false;
+    let mut current_sep = 0u8;
+    let mut i = 2;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'0'..=b'9' => {
+                current = current
+                    .saturating_mul(10)
+                    .saturating_add((bytes[i] - b'0') as u32)
+                    .min(65535);
+                current_set = true;
+                i += 1;
+            }
+            b';' => {
+                if count >= params.len() {
+                    return None;
+                }
+                params[count] = current;
+                seps[count] = current_sep;
+                count += 1;
+                current = 0;
+                current_set = false;
+                current_sep = b';';
+                i += 1;
+            }
+            b'm' => {
+                if current_set || current_sep != 0 || count != 0 {
+                    if count >= params.len() {
+                        return None;
+                    }
+                    params[count] = current;
+                    seps[count] = current_sep;
+                    count += 1;
+                }
+                return Some((params, seps, count, i + 1));
+            }
+            _ => return None,
+        }
+    }
+    None
+}
+
 pub struct Parser {
     state: State,
     intermediates: [u8; 2],
@@ -158,6 +213,14 @@ impl Parser {
                 && let Some((row, col, len)) = parse_cursor_position(&bytes[index..])
             {
                 terminal.csi_dispatch(0, &[], &[row, col], &[], b'H');
+                index += len;
+                continue;
+            }
+            if matches!(self.state, State::Ground)
+                && self.utf8.needed == 0
+                && let Some((params, seps, n, len)) = parse_sgr(&bytes[index..])
+            {
+                terminal.csi_dispatch(0, &[], &params[..n], &seps[..n], b'm');
                 index += len;
                 continue;
             }
@@ -622,5 +685,68 @@ mod tests {
                 "split at {split}"
             );
         }
+    }
+
+    #[test]
+    fn parse_sgr_matches_state_machine() {
+        let cases: &[&[u8]] = &[
+            b"\x1b[m",
+            b"\x1b[0m",
+            b"\x1b[1;3;4m",
+            b"\x1b[38;5;196;48;5;21;1;3;4m",
+            b"\x1b[;1m",
+            b"\x1b[1;m",
+            b"\x1b[10;20;30;40;50;60m",
+        ];
+        for &bytes in cases {
+            let (params, seps, n, len) =
+                parse_sgr(bytes).unwrap_or_else(|| panic!("no parse: {:?}", bytes));
+            assert_eq!(len, bytes.len());
+            // Reference: replicate the byte state machine's param building.
+            let (mut rp, mut rs, mut cur, mut set, mut csep) =
+                (Vec::new(), Vec::new(), 0u32, false, 0u8);
+            for &b in &bytes[2..bytes.len() - 1] {
+                match b {
+                    b'0'..=b'9' => {
+                        cur = cur
+                            .saturating_mul(10)
+                            .saturating_add((b - b'0') as u32)
+                            .min(65535);
+                        set = true;
+                    }
+                    b';' => {
+                        rp.push(cur);
+                        rs.push(csep);
+                        cur = 0;
+                        set = false;
+                        csep = b';';
+                    }
+                    _ => {}
+                }
+            }
+            if set || csep != 0 || !rp.is_empty() {
+                rp.push(cur);
+                rs.push(csep);
+            }
+            assert_eq!(&params[..n], rp.as_slice(), "params for {:?}", bytes);
+            assert_eq!(&seps[..n], rs.as_slice(), "seps for {:?}", bytes);
+        }
+    }
+
+    #[test]
+    fn sgr_fast_path_matches_byte_path_pen() {
+        let seq = b"\x1b[38;5;196;48;5;21;1;3;4m";
+        let mut a = terminal();
+        let mut parser = Parser::new();
+        parser.advance(seq, &mut a);
+        let mut b = terminal();
+        let mut parser2 = Parser::new();
+        // Force the byte state machine by feeding one byte at a time.
+        for &byte in seq {
+            parser2.byte(byte, &mut b);
+        }
+        assert_eq!(a.pen.fg, b.pen.fg);
+        assert_eq!(a.pen.bg, b.pen.bg);
+        assert_eq!(a.pen.attrs, b.pen.attrs);
     }
 }
