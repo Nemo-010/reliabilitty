@@ -2577,11 +2577,21 @@ mod tests {
     fn ascii_run_written_range_covers_every_written_cell() {
         for len in 1..=45usize {
             for start in 0..20usize {
-                for with_region in [false, true] {
+                // 0: no region; 1: full screen with offset; 2: partial region
+                // whose bottom margin is above the last row.
+                for region_mode in 0..3u8 {
                     let mut t = terminal(4);
-                    if with_region {
+                    if region_mode == 1 {
                         t.scroll_bottom = 3;
                         t.region_offset = 1;
+                    } else if region_mode == 2 {
+                        t.scroll_bottom = 2;
+                        t.region_offset = 1;
+                        // Keep the run inside the region so the wrap loop is
+                        // taken (it requires end_row < scroll_bottom).
+                        if start + len > 40 {
+                            continue;
+                        }
                     }
                     t.cursor.x = start;
                     let bytes: Vec<u8> = (0..len).map(|i| b'a' + (i % 26) as u8).collect();
@@ -2593,7 +2603,7 @@ mod tests {
                         let blank = t.line_mut(row).cells.iter().all(Cell::is_blank);
                         assert!(
                             blank,
-                            "stale cell: len={len} start={start} row={row} with_region={with_region}"
+                            "stale cell: len={len} start={start} row={row} region_mode={region_mode}"
                         );
                     }
                 }
