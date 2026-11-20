@@ -113,6 +113,61 @@ fn parse_cursor_position(bytes: &[u8]) -> Option<(u32, u32, usize)> {
     Some((row, col, i + 1))
 }
 
+/// Parses a plain `ESC [ <digits> (;<digits>)* m` SGR into fixed arrays,
+/// matching the byte state machine's params/separators semantics. Returns the
+/// params, separators, count and bytes consumed. Anything with a private
+/// marker, intermediate, subparameter other than `;`, or non-SGR final falls
+/// back to the state machine.
+fn parse_sgr(bytes: &[u8]) -> Option<([u32; 32], [u8; 32], usize, usize)> {
+    if bytes.len() < 3 || bytes[0] != 0x1b || bytes[1] != b'[' {
+        return None;
+    }
+    let mut params = [0u32; 32];
+    let mut seps = [0u8; 32];
+    let mut count = 0usize;
+    let mut current = 0u32;
+    let mut current_set = false;
+    let mut current_sep = 0u8;
+    let mut i = 2;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'0'..=b'9' => {
+                current = current
+                    .saturating_mul(10)
+                    .saturating_add((bytes[i] - b'0') as u32)
+                    .min(65535);
+                current_set = true;
+                i += 1;
+            }
+            b';' => {
+                if count >= params.len() {
+                    return None;
+                }
+                params[count] = current;
+                seps[count] = current_sep;
+                count += 1;
+                current = 0;
+                current_set = false;
+                current_sep = b';';
+                i += 1;
+            }
+            b'm' => {
+                if current_set || current_sep != 0 || count != 0 {
+                    if count >= params.len() {
+                        return None;
+                    }
+                    params[count] = current;
+                    seps[count] = current_sep;
+                    count += 1;
+                }
+                return Some((params, seps, count, i + 1));
+            }
+            _ => return None,
+        }
+    }
+    None
+}
+
 pub struct Parser {
     state: State,
     intermediates: [u8; 2],
@@ -161,14 +216,38 @@ impl Parser {
                 index += len;
                 continue;
             }
+            if matches!(self.state, State::Ground)
+                && self.utf8.needed == 0
+                && let Some((params, seps, n, len)) = parse_sgr(&bytes[index..])
+            {
+                terminal.csi_dispatch(0, &[], &params[..n], &seps[..n], b'm');
+                index += len;
+                continue;
+            }
             if matches!(self.state, State::Ground) && self.utf8.needed == 0 {
                 let start = index;
-                while index < bytes.len() && (0x20..=0x7e).contains(&bytes[index]) {
+                let mut ascii_only = true;
+                while index < bytes.len() && bytes[index] >= 0x20 && bytes[index] != 0x7f {
+                    ascii_only &= bytes[index] < 0x80;
                     index += 1;
                 }
-                if index - start >= 8 {
-                    terminal.print_ascii_run(&bytes[start..index]);
-                    continue;
+                if index > start {
+                    if ascii_only {
+                        terminal.print_ascii_run(&bytes[start..index]);
+                        continue;
+                    }
+                    let text = match std::str::from_utf8(&bytes[start..index]) {
+                        Ok(text) => text,
+                        Err(error) => {
+                            let valid = error.valid_up_to();
+                            std::str::from_utf8(&bytes[start..start + valid]).unwrap_or("")
+                        }
+                    };
+                    if !text.is_empty() {
+                        terminal.print_text_run(text);
+                        index = start + text.len();
+                        continue;
+                    }
                 }
                 index = start;
                 let b = bytes[index];
@@ -579,5 +658,191 @@ mod tests {
         parser.advance(&bytes[..1], &mut terminal);
         parser.advance(&bytes[1..], &mut terminal);
         assert_eq!(terminal.lines()[0].cells[0].ch, '\u{4e16}');
+    }
+
+    #[test]
+    fn text_run_split_at_every_byte_boundary_matches_whole() {
+        let text = "ab\u{e9}\u{4e16}\u{1f600}cd";
+        let bytes = text.as_bytes();
+        for split in 1..bytes.len() {
+            let mut whole = terminal();
+            let mut parser = Parser::new();
+            parser.advance(bytes, &mut whole);
+
+            let mut split_term = terminal();
+            let mut split_parser = Parser::new();
+            split_parser.advance(&bytes[..split], &mut split_term);
+            split_parser.advance(&bytes[split..], &mut split_term);
+
+            let cell_chars = |t: &Terminal| {
+                (0..t.rows)
+                    .flat_map(|r| t.lines()[r].cells.iter().map(|c| (c.ch, c.width)))
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(
+                cell_chars(&split_term),
+                cell_chars(&whole),
+                "split at {split}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_sgr_matches_state_machine() {
+        let cases: &[&[u8]] = &[
+            b"\x1b[m",
+            b"\x1b[0m",
+            b"\x1b[1;3;4m",
+            b"\x1b[38;5;196;48;5;21;1;3;4m",
+            b"\x1b[;1m",
+            b"\x1b[1;m",
+            b"\x1b[10;20;30;40;50;60m",
+        ];
+        for &bytes in cases {
+            let (params, seps, n, len) =
+                parse_sgr(bytes).unwrap_or_else(|| panic!("no parse: {:?}", bytes));
+            assert_eq!(len, bytes.len());
+            // Reference: replicate the byte state machine's param building.
+            let (mut rp, mut rs, mut cur, mut set, mut csep) =
+                (Vec::new(), Vec::new(), 0u32, false, 0u8);
+            for &b in &bytes[2..bytes.len() - 1] {
+                match b {
+                    b'0'..=b'9' => {
+                        cur = cur
+                            .saturating_mul(10)
+                            .saturating_add((b - b'0') as u32)
+                            .min(65535);
+                        set = true;
+                    }
+                    b';' => {
+                        rp.push(cur);
+                        rs.push(csep);
+                        cur = 0;
+                        set = false;
+                        csep = b';';
+                    }
+                    _ => {}
+                }
+            }
+            if set || csep != 0 || !rp.is_empty() {
+                rp.push(cur);
+                rs.push(csep);
+            }
+            assert_eq!(&params[..n], rp.as_slice(), "params for {:?}", bytes);
+            assert_eq!(&seps[..n], rs.as_slice(), "seps for {:?}", bytes);
+        }
+    }
+
+    #[test]
+    fn sgr_fast_path_matches_byte_path_pen() {
+        let seq = b"\x1b[38;5;196;48;5;21;1;3;4m";
+        let mut a = terminal();
+        let mut parser = Parser::new();
+        parser.advance(seq, &mut a);
+        let mut b = terminal();
+        let mut parser2 = Parser::new();
+        // Force the byte state machine by feeding one byte at a time.
+        for &byte in seq {
+            parser2.byte(byte, &mut b);
+        }
+        assert_eq!(a.pen.fg, b.pen.fg);
+        assert_eq!(a.pen.bg, b.pen.bg);
+        assert_eq!(a.pen.attrs, b.pen.attrs);
+    }
+}
+
+#[cfg(test)]
+mod fuzz_sgr {
+    use super::*;
+    use crate::theme::Theme;
+    use crate::vt::{CursorStyle, Terminal};
+
+    fn term() -> Terminal {
+        let theme = Theme::from_config(&crate::config::ColorsConfig::default()).unwrap();
+        Terminal::new(20, 4, 100, theme, CursorStyle::Block, true)
+    }
+
+    fn snap(t: &Terminal) -> String {
+        let mut out = format!(
+            "{:?}{:?}{:?}{} {}",
+            t.pen.fg, t.pen.bg, t.pen.attrs, t.cursor.x, t.cursor.y
+        );
+        for row in 0..t.rows {
+            for c in &t.lines()[row].cells {
+                out.push_str(&format!(
+                    "{}{:?}{:?}{:?}{}",
+                    c.ch, c.fg, c.bg, c.attrs, c.width
+                ));
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn sgr_fast_path_fuzz_matches_byte_at_a_time() {
+        let pieces: &[&[u8]] = &[
+            b"\x1b[",
+            b"\x1b[",
+            b"0",
+            b"1",
+            b"3",
+            b"4",
+            b"5",
+            b"8",
+            b"9",
+            b"2",
+            b";",
+            b";",
+            b":",
+            b"m",
+            b"m",
+            b"a",
+            b"b",
+            b"\x1b",
+            b"[",
+            b"?",
+            b"\n",
+            b"\r",
+            b" ",
+            b"6",
+            b"7",
+            b"\xc3\xa9",
+            b"\xe4\xb8\xad",
+            b"H",
+            b"K",
+            b"\x9b",
+            b"9999999999",
+        ];
+        let mut seed = 0x1234_5678_9abc_def0u64;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        for case in 0..20_000 {
+            let mut bytes = Vec::new();
+            for _ in 0..1 + next() % 24 {
+                bytes.extend_from_slice(pieces[(next() % pieces.len() as u64) as usize]);
+            }
+            let mut whole = term();
+            Parser::new().advance(&bytes, &mut whole);
+            let mut single = term();
+            let mut parser = Parser::new();
+            for &b in &bytes {
+                parser.advance(&[b], &mut single);
+            }
+            assert_eq!(snap(&whole), snap(&single), "case {case}: {bytes:?}");
+            let cut = (next() % (bytes.len() as u64 + 1)) as usize;
+            let mut split = term();
+            let mut parser = Parser::new();
+            parser.advance(&bytes[..cut], &mut split);
+            parser.advance(&bytes[cut..], &mut split);
+            assert_eq!(
+                snap(&split),
+                snap(&single),
+                "split case {case} cut {cut}: {bytes:?}"
+            );
+        }
     }
 }

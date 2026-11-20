@@ -270,6 +270,13 @@ impl Damage {
         !self.all && !self.rows.iter().any(|row| *row)
     }
 
+    /// Marks every row dirty, reusing the existing allocation.
+    pub fn set_all(&mut self, rows: usize) {
+        self.all = true;
+        self.rows.clear();
+        self.rows.resize(rows, true);
+    }
+
     pub fn range(&self) -> Option<(usize, usize)> {
         if self.all {
             return Some((0, self.rows.len().saturating_sub(1)));
@@ -1542,6 +1549,7 @@ impl Terminal {
                 let lines = self.lines_mut();
                 let mut x = x0;
                 let mut physical = map(start_y);
+                let mut row_start = x0;
                 for &byte in bytes {
                     let line = &mut lines[physical];
                     let old = line.cells[x];
@@ -1568,16 +1576,20 @@ impl Terminal {
                         attrs,
                         width: 1,
                     };
-                    line.mark_written(x);
                     line.wrapped = false;
                     x += 1;
                     if x == cols {
+                        line.mark_written_range(row_start, cols - 1);
                         x = 0;
+                        row_start = 0;
                         physical += 1;
                         if physical > region_bottom {
                             physical = region_top;
                         }
                     }
+                }
+                if x > 0 {
+                    lines[physical].mark_written_range(row_start, x - 1);
                 }
             }
             for row in start_y..=end_row {
@@ -1637,8 +1649,8 @@ impl Terminal {
                         attrs,
                         width: 1,
                     };
-                    line.mark_written(x);
                 }
+                line.mark_written_range(x0, x0 + segment.len() - 1);
                 line.wrapped = false;
                 segment[segment.len() - 1] as char
             };
@@ -1653,6 +1665,89 @@ impl Terminal {
             self.last_graphic = last;
             self.mark_row(y);
             offset += segment.len();
+        }
+    }
+
+    /// Prints text made of printable ASCII and non-combining width one or two
+    /// characters without per-character dispatch. Anything else goes through
+    /// `print`, so the result is identical to calling `print` per character.
+    pub fn print_text_run(&mut self, text: &str) {
+        if self.insert_mode
+            || self.charsets[self.active_charset] != Charset::Ascii
+            || self.single_shift.is_some()
+        {
+            for ch in text.chars() {
+                self.print(ch);
+            }
+            return;
+        }
+        let cols = self.cols;
+        let mut rest = text.chars().peekable();
+        while let Some(&first) = rest.peek() {
+            if self.wrap_pending {
+                self.print(first);
+                rest.next();
+                continue;
+            }
+            let y = self.cursor.y;
+            let start = self.cursor.x;
+            let (fg, bg, attrs) = (self.pen.fg, self.pen.bg, self.pen.attrs);
+            let mut x = start;
+            let mut last = None;
+            let mut last_x = start;
+            {
+                let line = self.line_mut(y);
+                while let Some(&ch) = rest.peek() {
+                    let width = if ch.is_ascii() {
+                        1
+                    } else {
+                        ch.width().unwrap_or(0)
+                    };
+                    if (width != 1 && width != 2)
+                        || x + width >= cols
+                        || line.cells[x].width != 1
+                        || (width == 2 && line.cells[x + 1].width != 1)
+                    {
+                        break;
+                    }
+                    let cell = Cell {
+                        ch,
+                        extra: 0,
+                        fg,
+                        bg,
+                        attrs,
+                        width: width as u8,
+                    };
+                    line.cells[x] = cell;
+                    if width == 2 {
+                        line.cells[x + 1] = Cell {
+                            ch: ' ',
+                            width: 0,
+                            ..cell
+                        };
+                    }
+                    last = Some(ch);
+                    last_x = x;
+                    x += width;
+                    rest.next();
+                }
+                if last.is_some() {
+                    line.mark_written_range(start, x - 1);
+                    line.wrapped = false;
+                }
+            }
+            match last {
+                Some(ch) => {
+                    self.last_printed = Some((y, last_x));
+                    self.last_graphic = ch;
+                    self.mark_row(y);
+                    self.cursor.x = x;
+                }
+                None => {
+                    self.print(first);
+                    rest.next();
+                }
+            }
         }
     }
 
@@ -2432,6 +2527,173 @@ mod tests {
         }
     }
 
+    #[derive(Debug, PartialEq)]
+    struct CellSnap {
+        ch: char,
+        extra: u32,
+        width: u8,
+        fg: Color,
+        bg: Color,
+        attrs: Attrs,
+    }
+
+    #[derive(Debug, PartialEq)]
+    struct TermSnap {
+        cells: Vec<Vec<CellSnap>>,
+        cursor: (usize, usize),
+        wrap_pending: bool,
+        last_printed: Option<(usize, usize)>,
+        last_graphic: char,
+        dirty: Vec<bool>,
+        region_offset: usize,
+    }
+
+    fn term_snapshot(t: &Terminal) -> TermSnap {
+        TermSnap {
+            cells: (0..t.rows)
+                .map(|row| {
+                    t.lines()[row]
+                        .cells
+                        .iter()
+                        .map(|c| CellSnap {
+                            ch: c.ch,
+                            extra: c.extra,
+                            width: c.width,
+                            fg: c.fg,
+                            bg: c.bg,
+                            attrs: c.attrs,
+                        })
+                        .collect()
+                })
+                .collect(),
+            cursor: (t.cursor.x, t.cursor.y),
+            wrap_pending: t.wrap_pending,
+            last_printed: t.last_printed,
+            last_graphic: t.last_graphic,
+            dirty: t.dirty.clone(),
+            region_offset: t.region_offset,
+        }
+    }
+
+    #[test]
+    fn short_ascii_runs_match_per_byte_print() {
+        // Run lengths 1..=7 at every starting column, plus a long run.
+        for len in 1..=8 {
+            let bytes: Vec<u8> = (0..len).map(|i| b'a' + (i as u8 % 26)).collect();
+            for start in 0..20 {
+                for region in [false, true] {
+                    let mut slow = terminal(3);
+                    let mut fast = terminal(3);
+                    if region {
+                        for t in [&mut slow, &mut fast] {
+                            t.scroll_top = 1;
+                            t.scroll_bottom = 2;
+                            t.cursor.y = 1;
+                            t.region_offset = 1;
+                        }
+                    }
+                    slow.cursor.x = start;
+                    fast.cursor.x = start;
+                    for &b in &bytes {
+                        slow.print(b as char);
+                    }
+                    fast.print_ascii_run(&bytes);
+                    assert_eq!(
+                        term_snapshot(&fast),
+                        term_snapshot(&slow),
+                        "len={len} start={start} region={region}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn ascii_run_matches_print_with_flags_and_wide_overwrite() {
+        for mode in 0..4 {
+            for len in 1..=9 {
+                let bytes: Vec<u8> = (0..len).map(|i| b'a' + (i as u8 % 26)).collect();
+                let mut slow = terminal(3);
+                let mut fast = terminal(3);
+                for t in [&mut slow, &mut fast] {
+                    if mode & 1 != 0 {
+                        t.autowrap = false;
+                    }
+                    if mode & 2 != 0 {
+                        t.wrap_pending = true;
+                    }
+                    // Non-default background pen and a pre-existing wide char
+                    // in the run's path.
+                    t.pen.bg = Color::Indexed(4);
+                    t.cursor.x = 2;
+                    t.lines_mut()[0].cells[3] = Cell {
+                        ch: '\u{4e16}',
+                        extra: 0,
+                        fg: Color::Default,
+                        bg: Color::Default,
+                        attrs: Attrs::default(),
+                        width: 2,
+                    };
+                    t.lines_mut()[0].cells[4] = Cell {
+                        ch: ' ',
+                        extra: 0,
+                        fg: Color::Default,
+                        bg: Color::Default,
+                        attrs: Attrs::default(),
+                        width: 0,
+                    };
+                }
+                for &b in &bytes {
+                    slow.print(b as char);
+                }
+                fast.print_ascii_run(&bytes);
+                assert_eq!(
+                    term_snapshot(&fast),
+                    term_snapshot(&slow),
+                    "mode={mode} len={len}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ascii_run_written_range_covers_every_written_cell() {
+        for len in 1..=45usize {
+            for start in 0..20usize {
+                // 0: no region; 1: full screen with offset; 2: partial region
+                // whose bottom margin is above the last row.
+                for region_mode in 0..3u8 {
+                    let mut t = terminal(4);
+                    if region_mode == 1 {
+                        t.scroll_bottom = 3;
+                        t.region_offset = 1;
+                    } else if region_mode == 2 {
+                        t.scroll_bottom = 2;
+                        t.region_offset = 1;
+                        // Keep the run inside the region so the wrap loop is
+                        // taken (it requires end_row < scroll_bottom).
+                        if start + len > 40 {
+                            continue;
+                        }
+                    }
+                    t.cursor.x = start;
+                    let bytes: Vec<u8> = (0..len).map(|i| b'a' + (i % 26) as u8).collect();
+                    t.print_ascii_run(&bytes);
+                    // Clear and check via line_mut so scroll-region mapping is
+                    // applied consistently on both sides.
+                    for row in 0..t.rows {
+                        t.line_mut(row).clear_written();
+                        let blank = t.line_mut(row).cells.iter().all(Cell::is_blank);
+                        assert!(
+                            blank,
+                            "stale cell: len={len} start={start} row={row} region_mode={region_mode}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn utf8_and_combining() {
         let mut terminal = terminal(2);
@@ -2800,6 +3062,114 @@ mod tests {
         for text in ["", "a", "ab", "abc", "hello world"] {
             let encoded = base64_encode(text.as_bytes());
             assert_eq!(base64_decode(&encoded).unwrap(), text.as_bytes());
+        }
+    }
+}
+#[cfg(test)]
+mod textrun_equiv {
+    use super::*;
+    fn dump(t: &Terminal) -> String {
+        let mut o = format!(
+            "{:?} {} {:?} {:?} {:?} {} ",
+            (t.cursor.x, t.cursor.y),
+            t.wrap_pending,
+            t.last_printed,
+            t.dirty,
+            t.region_offset,
+            t.last_graphic
+        );
+        for r in 0..t.rows {
+            let l = &t.lines()[r];
+            o.push_str(&format!("[w{} ", l.wrapped));
+            for c in &l.cells {
+                o.push_str(&format!(
+                    "{}:{}:{}:{:?}:{:?}",
+                    c.ch, c.width, c.extra, c.fg, c.bg
+                ));
+            }
+            o.push(']');
+        }
+        o
+    }
+    #[test]
+    fn text_run_matches_per_char_print() {
+        let samples = [
+            "a",
+            "\u{e9}",
+            "\u{4e2d}",
+            "\u{4e2d}\u{6587}\u{5b57}",
+            "a\u{e9}\u{4e2d}b",
+            "e\u{301}x",
+            "x\u{200d}y",
+            "\u{1f600}a\u{1f600}",
+            "ab\u{4e2d}c",
+            "\u{85}z",
+            "\u{2500}\u{2500}\u{2500}\u{2502}\u{2588}",
+            "\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}",
+        ];
+        for sample in samples {
+            for rep in [1usize, 3, 12] {
+                let text = sample.repeat(rep);
+                for start in 0..20usize {
+                    for (aw, pending, wide, ins, rows) in [
+                        (true, false, false, false, 3usize),
+                        (false, false, false, false, 3),
+                        (true, true, false, false, 3),
+                        (true, false, true, false, 3),
+                        (true, false, false, true, 3),
+                        (true, false, false, false, 2),
+                    ] {
+                        let mut a = Terminal::new(
+                            20,
+                            rows,
+                            100,
+                            Theme::from_config(&crate::config::ColorsConfig::default()).unwrap(),
+                            CursorStyle::Block,
+                            true,
+                        );
+                        let mut b = Terminal::new(
+                            20,
+                            rows,
+                            100,
+                            Theme::from_config(&crate::config::ColorsConfig::default()).unwrap(),
+                            CursorStyle::Block,
+                            true,
+                        );
+                        for t in [&mut a, &mut b] {
+                            t.autowrap = aw;
+                            t.insert_mode = ins;
+                            t.pen.bg = Color::Indexed(3);
+                            if wide {
+                                for _ in 0..8 {
+                                    t.print('\u{4e2d}');
+                                }
+                                t.cursor.x = 0;
+                                t.cursor.y = 0;
+                                t.wrap_pending = false;
+                            }
+                            t.cursor.x = start;
+                            t.wrap_pending = pending && start == 19;
+                        }
+                        for ch in text.chars() {
+                            a.print(ch);
+                        }
+                        b.print_text_run(&text);
+                        assert_eq!(
+                            dump(&a),
+                            dump(&b),
+                            "sample={sample:?} rep={rep} start={start} aw={aw} pend={pending} wide={wide} ins={ins} rows={rows}"
+                        );
+                        for r in 0..rows {
+                            a.line_mut(r).clear_written();
+                            b.line_mut(r).clear_written();
+                            assert!(
+                                b.lines()[r].cells.iter().all(Cell::is_blank),
+                                "stale row {r} sample={sample:?}"
+                            );
+                        }
+                    }
+                }
+            }
         }
     }
 }

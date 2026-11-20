@@ -96,6 +96,7 @@ impl Canvas {
             return;
         };
         let source = rgb(color);
+        let argb = self.argb;
         for row in y0..y1 {
             let source_row = (row as i32 - y) as usize * width as usize;
             let destination_row = row as usize * self.width as usize;
@@ -105,7 +106,7 @@ impl Canvas {
                     continue;
                 }
                 let index = destination_row + col as usize;
-                self.pixels[index] = if self.argb {
+                self.pixels[index] = if argb {
                     blend_alpha(self.pixels[index], source, alpha)
                 } else {
                     blend(self.pixels[index], source, alpha)
@@ -118,6 +119,7 @@ impl Canvas {
         let Some((x0, y0, x1, y1)) = self.clip(x, y, width as i32, height as i32) else {
             return;
         };
+        let argb = self.argb;
         for row in y0..y1 {
             let source_row = (row as i32 - y) as usize * width as usize;
             let destination_row = row as usize * self.width as usize;
@@ -133,7 +135,7 @@ impl Canvas {
                     data[source_index + 2],
                 ];
                 let index = destination_row + col as usize;
-                self.pixels[index] = if self.argb {
+                self.pixels[index] = if argb {
                     blend_alpha(self.pixels[index], rgb(color), alpha)
                 } else {
                     blend(self.pixels[index], rgb(color), alpha)
@@ -252,7 +254,7 @@ pub struct Renderer {
     unfocused_hollow: bool,
     fonts: Vec<LoadedFont>,
     primary: [usize; 4],
-    database: Database,
+    database: Arc<Database>,
     fallback_families: Vec<String>,
     loaded_families: HashMap<String, Option<u32>>,
     glyph_cache: HashMap<GlyphKey, Option<GlyphBitmap>>,
@@ -263,7 +265,12 @@ pub struct Renderer {
 impl Renderer {
     /// Loads fonts and computes cell metrics. `dpi` is only used when the
     /// configuration leaves it at zero.
-    pub fn new(config: &FontConfig, dpi: f32, size_override: Option<f32>) -> Result<Self, String> {
+    pub fn new(
+        config: &FontConfig,
+        dpi: f32,
+        size_override: Option<f32>,
+        database: Arc<Database>,
+    ) -> Result<Self, String> {
         let size_points = size_override.unwrap_or(config.size);
         let dpi = if config.dpi > 0.0 {
             config.dpi
@@ -271,9 +278,6 @@ impl Renderer {
             dpi.clamp(48.0, 384.0)
         };
         let size_px = (size_points * dpi / 72.0).max(1.0);
-
-        let mut database = Database::new();
-        database.load_system_fonts();
 
         let regular_id = query_face(&database, &config.normal, Weight::NORMAL, Style::Normal)
             .ok_or_else(|| format!("no font found for family {:?}", config.normal.family))?;

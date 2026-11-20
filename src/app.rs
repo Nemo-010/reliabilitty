@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -86,6 +87,7 @@ struct App {
     terminal: Terminal,
     parser: Parser,
     renderer: Renderer,
+    font_database: Arc<fontdb::Database>,
     canvas: Canvas,
     bindings: Bindings,
     signals: Signals,
@@ -192,7 +194,12 @@ pub fn run(cli: Cli) -> Result<(), String> {
     };
     x11.present(&canvas, &full, cell_height, 0);
 
-    let mut renderer = Renderer::new(&config.font, dpi, None)?;
+    let font_database = Arc::new({
+        let mut database = fontdb::Database::new();
+        database.load_system_fonts();
+        database
+    });
+    let mut renderer = Renderer::new(&config.font, dpi, None, font_database.clone())?;
     renderer.set_cursor_options(config.cursor.thickness, config.cursor.unfocused_hollow);
     cell_width = renderer.cell_width();
     cell_height = renderer.cell_height();
@@ -251,6 +258,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
         terminal,
         parser: Parser::new(),
         renderer,
+        font_database,
         canvas,
         bindings,
         signals,
@@ -1191,7 +1199,12 @@ impl App {
     }
 
     fn rebuild_renderer(&mut self) -> Result<(), String> {
-        let mut renderer = Renderer::new(&self.config.font, self.dpi, self.font_size_override)?;
+        let mut renderer = Renderer::new(
+            &self.config.font,
+            self.dpi,
+            self.font_size_override,
+            self.font_database.clone(),
+        )?;
         renderer.set_cursor_options(
             self.config.cursor.thickness,
             self.config.cursor.unfocused_hollow,
@@ -1403,13 +1416,11 @@ impl App {
         }
         let mut damage = self.terminal.take_damage();
         if self.redraw_all {
-            damage.all = true;
-            damage.rows = vec![true; self.terminal.height()];
+            damage.set_all(self.terminal.height());
             self.redraw_all = false;
         }
         if self.bell_until.is_some() {
-            damage.all = true;
-            damage.rows = vec![true; self.terminal.height()];
+            damage.set_all(self.terminal.height());
         }
         if damage.is_empty() {
             self.terminal.recycle_damage(damage);
@@ -1424,8 +1435,7 @@ impl App {
         // An overlay stays in place while the terminal scrolls, so the canvas
         // shift would leave a stale copy behind. Redraw everything instead.
         if damage.scroll != 0 && (self.search.is_some() || self.context_menu.is_some()) {
-            damage.all = true;
-            damage.rows = vec![true; self.terminal.height()];
+            damage.set_all(self.terminal.height());
         }
         // A whole-screen scroll only moves pixels. Shift the canvas once and
         // let the newly exposed rows be redrawn, instead of rasterizing every
@@ -1470,32 +1480,33 @@ impl App {
     }
 
     fn wait(&mut self, now: Instant) -> Result<(), String> {
-        let mut deadlines: Vec<Instant> = Vec::new();
+        let mut earliest: Option<Instant> = None;
+        let mut deadline = |d: Instant| {
+            earliest = Some(earliest.map_or(d, |e| e.min(d)));
+        };
         if self.terminal.has_damage() || self.redraw_all {
-            deadlines.push(self.last_pty_input + Duration::from_millis(10));
-            deadlines.push(self.next_frame);
+            deadline(self.last_pty_input + Duration::from_millis(10));
+            deadline(self.next_frame);
         }
         if self.cursor_blinking() {
-            deadlines.push(self.blink_deadline);
+            deadline(self.blink_deadline);
         }
         if self.drag.is_some() {
-            deadlines.push(self.auto_scroll_at);
+            deadline(self.auto_scroll_at);
         }
         if let Some(until) = self.bell_until {
-            deadlines.push(until);
+            deadline(until);
         }
         if self.config_path.is_some() {
-            deadlines.push(self.next_config_check);
+            deadline(self.next_config_check);
         }
         if let Some(exited) = self.child_exit_at
             && !self.hold
             && !self.pty_eof
         {
-            deadlines.push(exited + Duration::from_millis(500));
+            deadline(exited + Duration::from_millis(500));
         }
-        let timeout = deadlines
-            .into_iter()
-            .min()
+        let timeout = earliest
             .map(|deadline| {
                 let millis = deadline.saturating_duration_since(now).as_millis();
                 millis.clamp(1, i32::MAX as u128) as i32
