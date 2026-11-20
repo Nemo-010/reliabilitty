@@ -166,7 +166,7 @@ impl Parser {
                 while index < bytes.len() && (0x20..=0x7e).contains(&bytes[index]) {
                     index += 1;
                 }
-                if index - start >= 8 {
+                if index - start >= 1 {
                     terminal.print_ascii_run(&bytes[start..index]);
                     continue;
                 }

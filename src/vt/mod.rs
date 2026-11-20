@@ -2433,6 +2433,80 @@ mod tests {
     }
 
     #[test]
+    fn short_ascii_runs_match_per_byte_print() {
+        #[derive(Debug, PartialEq)]
+        struct CellSnap {
+            ch: char,
+            width: u8,
+            fg: Color,
+            bg: Color,
+            attrs: Attrs,
+        }
+        #[derive(Debug, PartialEq)]
+        struct Snap {
+            cells: Vec<Vec<CellSnap>>,
+            cursor: (usize, usize),
+            wrap_pending: bool,
+            last_printed: Option<(usize, usize)>,
+            last_graphic: char,
+            dirty: Vec<bool>,
+            region_offset: usize,
+        }
+        let snapshot = |t: &Terminal| Snap {
+            cells: (0..t.rows)
+                .map(|row| {
+                    t.lines()[row]
+                        .cells
+                        .iter()
+                        .map(|c| CellSnap {
+                            ch: c.ch,
+                            width: c.width,
+                            fg: c.fg,
+                            bg: c.bg,
+                            attrs: c.attrs,
+                        })
+                        .collect()
+                })
+                .collect(),
+            cursor: (t.cursor.x, t.cursor.y),
+            wrap_pending: t.wrap_pending,
+            last_printed: t.last_printed,
+            last_graphic: t.last_graphic,
+            dirty: t.dirty.clone(),
+            region_offset: t.region_offset,
+        };
+        // Run lengths 1..=7 at every starting column, plus a long run.
+        for len in 1..=8 {
+            let bytes: Vec<u8> = (0..len).map(|i| b'a' + (i as u8 % 26)).collect();
+            for start in 0..20 {
+                for region in [false, true] {
+                    let mut slow = terminal(3);
+                    let mut fast = terminal(3);
+                    if region {
+                        for t in [&mut slow, &mut fast] {
+                            t.scroll_top = 1;
+                            t.scroll_bottom = 2;
+                            t.cursor.y = 1;
+                            t.region_offset = 1;
+                        }
+                    }
+                    slow.cursor.x = start;
+                    fast.cursor.x = start;
+                    for &b in &bytes {
+                        slow.print(b as char);
+                    }
+                    fast.print_ascii_run(&bytes);
+                    assert_eq!(
+                        snapshot(&fast),
+                        snapshot(&slow),
+                        "len={len} start={start} region={region}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn utf8_and_combining() {
         let mut terminal = terminal(2);
         feed(&mut terminal, "e\u{301}".as_bytes());
