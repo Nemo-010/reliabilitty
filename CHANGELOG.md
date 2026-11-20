@@ -1,4 +1,10 @@
 
+## [0.1.15](https://github.com/pkgforge-apps/reliabilitty/compare/v0.1.14...v0.1.15) - 2026-11-20
+
+### Documentation
+
+- Refresh benchmarks for v0.1.14 with perf CPU measurements ([#29](https://github.com/pkgforge-apps/reliabilitty/pull/29)) - ([1a2eecf](https://github.com/pkgforge-apps/reliabilitty/commit/1a2eecf5c35e3c0289987a29d7b237fff1a20759))
+
 ## [0.1.14](https://github.com/pkgforge-apps/reliabilitty/compare/v0.1.13...v0.1.14) - 2026-11-20
 
 ### Performance
