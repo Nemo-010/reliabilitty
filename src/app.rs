@@ -1416,13 +1416,11 @@ impl App {
         }
         let mut damage = self.terminal.take_damage();
         if self.redraw_all {
-            damage.all = true;
-            damage.rows = vec![true; self.terminal.height()];
+            damage.set_all(self.terminal.height());
             self.redraw_all = false;
         }
         if self.bell_until.is_some() {
-            damage.all = true;
-            damage.rows = vec![true; self.terminal.height()];
+            damage.set_all(self.terminal.height());
         }
         if damage.is_empty() {
             self.terminal.recycle_damage(damage);
@@ -1437,8 +1435,7 @@ impl App {
         // An overlay stays in place while the terminal scrolls, so the canvas
         // shift would leave a stale copy behind. Redraw everything instead.
         if damage.scroll != 0 && (self.search.is_some() || self.context_menu.is_some()) {
-            damage.all = true;
-            damage.rows = vec![true; self.terminal.height()];
+            damage.set_all(self.terminal.height());
         }
         // A whole-screen scroll only moves pixels. Shift the canvas once and
         // let the newly exposed rows be redrawn, instead of rasterizing every
@@ -1483,32 +1480,33 @@ impl App {
     }
 
     fn wait(&mut self, now: Instant) -> Result<(), String> {
-        let mut deadlines: Vec<Instant> = Vec::new();
+        let mut earliest: Option<Instant> = None;
+        let mut deadline = |d: Instant| {
+            earliest = Some(earliest.map_or(d, |e| e.min(d)));
+        };
         if self.terminal.has_damage() || self.redraw_all {
-            deadlines.push(self.last_pty_input + Duration::from_millis(10));
-            deadlines.push(self.next_frame);
+            deadline(self.last_pty_input + Duration::from_millis(10));
+            deadline(self.next_frame);
         }
         if self.cursor_blinking() {
-            deadlines.push(self.blink_deadline);
+            deadline(self.blink_deadline);
         }
         if self.drag.is_some() {
-            deadlines.push(self.auto_scroll_at);
+            deadline(self.auto_scroll_at);
         }
         if let Some(until) = self.bell_until {
-            deadlines.push(until);
+            deadline(until);
         }
         if self.config_path.is_some() {
-            deadlines.push(self.next_config_check);
+            deadline(self.next_config_check);
         }
         if let Some(exited) = self.child_exit_at
             && !self.hold
             && !self.pty_eof
         {
-            deadlines.push(exited + Duration::from_millis(500));
+            deadline(exited + Duration::from_millis(500));
         }
-        let timeout = deadlines
-            .into_iter()
-            .min()
+        let timeout = earliest
             .map(|deadline| {
                 let millis = deadline.saturating_duration_since(now).as_millis();
                 millis.clamp(1, i32::MAX as u128) as i32

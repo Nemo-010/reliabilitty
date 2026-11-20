@@ -96,6 +96,7 @@ impl Canvas {
             return;
         };
         let source = rgb(color);
+        let argb = self.argb;
         for row in y0..y1 {
             let source_row = (row as i32 - y) as usize * width as usize;
             let destination_row = row as usize * self.width as usize;
@@ -105,7 +106,7 @@ impl Canvas {
                     continue;
                 }
                 let index = destination_row + col as usize;
-                self.pixels[index] = if self.argb {
+                self.pixels[index] = if argb {
                     blend_alpha(self.pixels[index], source, alpha)
                 } else {
                     blend(self.pixels[index], source, alpha)
@@ -118,6 +119,7 @@ impl Canvas {
         let Some((x0, y0, x1, y1)) = self.clip(x, y, width as i32, height as i32) else {
             return;
         };
+        let argb = self.argb;
         for row in y0..y1 {
             let source_row = (row as i32 - y) as usize * width as usize;
             let destination_row = row as usize * self.width as usize;
@@ -133,7 +135,7 @@ impl Canvas {
                     data[source_index + 2],
                 ];
                 let index = destination_row + col as usize;
-                self.pixels[index] = if self.argb {
+                self.pixels[index] = if argb {
                     blend_alpha(self.pixels[index], rgb(color), alpha)
                 } else {
                     blend(self.pixels[index], rgb(color), alpha)

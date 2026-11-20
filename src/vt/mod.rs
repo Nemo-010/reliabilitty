@@ -270,6 +270,13 @@ impl Damage {
         !self.all && !self.rows.iter().any(|row| *row)
     }
 
+    /// Marks every row dirty, reusing the existing allocation.
+    pub fn set_all(&mut self, rows: usize) {
+        self.all = true;
+        self.rows.clear();
+        self.rows.resize(rows, true);
+    }
+
     pub fn range(&self) -> Option<(usize, usize)> {
         if self.all {
             return Some((0, self.rows.len().saturating_sub(1)));
@@ -1637,8 +1644,8 @@ impl Terminal {
                         attrs,
                         width: 1,
                     };
-                    line.mark_written(x);
                 }
+                line.mark_written_range(x0, x0 + segment.len() - 1);
                 line.wrapped = false;
                 segment[segment.len() - 1] as char
             };
