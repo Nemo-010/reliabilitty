@@ -2444,27 +2444,29 @@ mod tests {
         }
     }
 
-    #[test]
-    fn short_ascii_runs_match_per_byte_print() {
-        #[derive(Debug, PartialEq)]
-        struct CellSnap {
-            ch: char,
-            width: u8,
-            fg: Color,
-            bg: Color,
-            attrs: Attrs,
-        }
-        #[derive(Debug, PartialEq)]
-        struct Snap {
-            cells: Vec<Vec<CellSnap>>,
-            cursor: (usize, usize),
-            wrap_pending: bool,
-            last_printed: Option<(usize, usize)>,
-            last_graphic: char,
-            dirty: Vec<bool>,
-            region_offset: usize,
-        }
-        let snapshot = |t: &Terminal| Snap {
+    #[derive(Debug, PartialEq)]
+    struct CellSnap {
+        ch: char,
+        extra: u32,
+        width: u8,
+        fg: Color,
+        bg: Color,
+        attrs: Attrs,
+    }
+
+    #[derive(Debug, PartialEq)]
+    struct TermSnap {
+        cells: Vec<Vec<CellSnap>>,
+        cursor: (usize, usize),
+        wrap_pending: bool,
+        last_printed: Option<(usize, usize)>,
+        last_graphic: char,
+        dirty: Vec<bool>,
+        region_offset: usize,
+    }
+
+    fn term_snapshot(t: &Terminal) -> TermSnap {
+        TermSnap {
             cells: (0..t.rows)
                 .map(|row| {
                     t.lines()[row]
@@ -2472,6 +2474,7 @@ mod tests {
                         .iter()
                         .map(|c| CellSnap {
                             ch: c.ch,
+                            extra: c.extra,
                             width: c.width,
                             fg: c.fg,
                             bg: c.bg,
@@ -2486,7 +2489,11 @@ mod tests {
             last_graphic: t.last_graphic,
             dirty: t.dirty.clone(),
             region_offset: t.region_offset,
-        };
+        }
+    }
+
+    #[test]
+    fn short_ascii_runs_match_per_byte_print() {
         // Run lengths 1..=7 at every starting column, plus a long run.
         for len in 1..=8 {
             let bytes: Vec<u8> = (0..len).map(|i| b'a' + (i as u8 % 26)).collect();
@@ -2509,8 +2516,8 @@ mod tests {
                     }
                     fast.print_ascii_run(&bytes);
                     assert_eq!(
-                        snapshot(&fast),
-                        snapshot(&slow),
+                        term_snapshot(&fast),
+                        term_snapshot(&slow),
                         "len={len} start={start} region={region}"
                     );
                 }
@@ -2520,25 +2527,6 @@ mod tests {
 
     #[test]
     fn ascii_run_matches_print_with_flags_and_wide_overwrite() {
-        let snapshot = |t: &Terminal| {
-            let cells: Vec<Vec<(char, u8, Color, Color)>> = (0..t.rows)
-                .map(|row| {
-                    t.lines()[row]
-                        .cells
-                        .iter()
-                        .map(|c| (c.ch, c.width, c.fg, c.bg))
-                        .collect()
-                })
-                .collect();
-            (
-                cells,
-                (t.cursor.x, t.cursor.y),
-                t.wrap_pending,
-                t.last_printed,
-                t.last_graphic,
-                t.dirty.clone(),
-            )
-        };
         for mode in 0..4 {
             for len in 1..=9 {
                 let bytes: Vec<u8> = (0..len).map(|i| b'a' + (i as u8 % 26)).collect();
@@ -2576,7 +2564,39 @@ mod tests {
                     slow.print(b as char);
                 }
                 fast.print_ascii_run(&bytes);
-                assert_eq!(snapshot(&fast), snapshot(&slow), "mode={mode} len={len}");
+                assert_eq!(
+                    term_snapshot(&fast),
+                    term_snapshot(&slow),
+                    "mode={mode} len={len}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ascii_run_written_range_covers_every_written_cell() {
+        for len in 1..=45usize {
+            for start in 0..20usize {
+                for with_region in [false, true] {
+                    let mut t = terminal(4);
+                    if with_region {
+                        t.scroll_bottom = 3;
+                        t.region_offset = 1;
+                    }
+                    t.cursor.x = start;
+                    let bytes: Vec<u8> = (0..len).map(|i| b'a' + (i % 26) as u8).collect();
+                    t.print_ascii_run(&bytes);
+                    // Clear and check via line_mut so scroll-region mapping is
+                    // applied consistently on both sides.
+                    for row in 0..t.rows {
+                        t.line_mut(row).clear_written();
+                        let blank = t.line_mut(row).cells.iter().all(Cell::is_blank);
+                        assert!(
+                            blank,
+                            "stale cell: len={len} start={start} row={row} with_region={with_region}"
+                        );
+                    }
+                }
             }
         }
     }
