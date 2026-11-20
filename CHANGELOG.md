@@ -1,4 +1,14 @@
 
+## [0.1.13](https://github.com/pkgforge-apps/reliabilitty/compare/v0.1.12...v0.1.13) - 2026-11-20
+
+### Documentation
+
+- Refresh benchmarks with foot on v0.1.12 ([#24](https://github.com/pkgforge-apps/reliabilitty/pull/24)) - ([b94fb46](https://github.com/pkgforge-apps/reliabilitty/commit/b94fb466b3b914add381cb38fe01ea3ea14cbbb9))
+
+### Performance
+
+- Faster non-ASCII and SGR parsing, cached font database, drop mimalloc ([#26](https://github.com/pkgforge-apps/reliabilitty/pull/26)) - ([e4656f0](https://github.com/pkgforge-apps/reliabilitty/commit/e4656f0242573c99dd00dd0f237a205d4ff1e6e2))
+
 ## [0.1.12](https://github.com/pkgforge-apps/reliabilitty/compare/v0.1.11...v0.1.12) - 2026-11-19
 
 ### Bug Fixes
