@@ -121,6 +121,12 @@ struct App {
     next_frame: Instant,
     frame_interval: Duration,
     resize_settle_at: Option<Instant>,
+    pending_resize: Option<(u16, u16)>,
+    resize_indicator_until: Option<Instant>,
+    fast_resize: bool,
+    resize_present_rects: Option<Vec<(u16, u16, u16, u16)>>,
+    redraw_overlays: bool,
+    overlay_rects: Vec<(u16, u16, u16, u16)>,
     last_pty_input: Instant,
     smoke: bool,
     rendered_once: bool,
@@ -365,6 +371,12 @@ pub fn run(cli: Cli) -> Result<(), String> {
         next_frame: now,
         frame_interval,
         resize_settle_at: None,
+        pending_resize: None,
+        resize_indicator_until: None,
+        fast_resize: false,
+        resize_present_rects: None,
+        redraw_overlays: false,
+        overlay_rects: Vec::new(),
         last_pty_input: now,
         smoke: cli.smoke,
         rendered_once: false,
@@ -376,7 +388,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
         pty_eof: false,
     };
     app.padding = app.config.window.padding;
-    app.resize_to_window();
+    app.resize_to_window(false);
     app.run()
 }
 
@@ -396,6 +408,14 @@ impl App {
             let events = self.x11.poll()?;
             for event in events {
                 self.handle_event(event, now)?;
+            }
+            if let Some(interval) = self.x11.sync_frame_interval() {
+                self.frame_interval = interval;
+            }
+            if let Some((width, height)) = self.pending_resize.take() {
+                self.x11.set_size(width, height);
+                self.resize_to_window(true);
+                self.resize_indicator_until = Some(now + Duration::from_millis(600));
             }
             let mut token = [0u8; 8];
             // SAFETY: pty_wake is a valid nonblocking eventfd; token is 8 bytes.
@@ -421,10 +441,11 @@ impl App {
                 self.maybe_reload(now);
             }
             let idle = now.duration_since(self.last_pty_input) >= Duration::from_millis(10);
-            if idle || now >= self.next_frame {
+            if idle || now >= self.next_frame || self.x11.sync_pending() {
                 self.cursor_damage();
                 self.render(now);
                 self.next_frame = now + self.frame_interval;
+                self.x11.acknowledge_sync();
             }
             if self.quit {
                 self.reader_stop.store(true, Ordering::Relaxed);
@@ -458,7 +479,21 @@ impl App {
             .is_some_and(|deadline| now >= deadline)
         {
             self.resize_settle_at = None;
+            let background = pixel(
+                &self.canvas,
+                self.terminal.theme().background,
+                self.x11.background_alpha(),
+            );
+            self.canvas.compact_stride(background);
             self.terminal.finish_deferred_resize();
+        }
+        if self
+            .resize_indicator_until
+            .is_some_and(|deadline| now >= deadline)
+        {
+            self.resize_indicator_until = None;
+            self.resize_present_rects = None;
+            self.redraw_all = true;
         }
     }
 
@@ -482,13 +517,15 @@ impl App {
                 state,
             } => self.handle_button(button, pressed, x, y, time, mods, state, now),
             UiEvent::Motion { x, y, mods, state } => self.handle_motion(x, y, mods, state, now),
-            UiEvent::Resize { width, height } => {
-                self.x11.set_size(width, height);
-                self.resize_to_window();
-            }
+            UiEvent::Resize { width, height } => self.pending_resize = Some((width, height)),
             UiEvent::Expose => {
-                self.terminal.mark_all();
-                self.redraw_all = true;
+                // A resize repaints its own exposed edge. Honouring the
+                // accompanying Expose would force a full redraw per frame.
+                if self.pending_resize.is_none() && self.resize_indicator_until.is_none() {
+                    self.terminal.mark_all();
+                    self.redraw_all = true;
+                    self.resize_present_rects = None;
+                }
             }
             UiEvent::Focus(focused) => {
                 self.focused = focused;
@@ -1291,7 +1328,7 @@ impl App {
                     self.terminal.set_initial_title(&title);
                     let _ = self.x11.set_title(&title);
                 }
-                self.resize_to_window();
+                self.resize_to_window(false);
                 let _ = self.x11.set_size_hints(
                     self.padding,
                     self.cell_width,
@@ -1318,7 +1355,7 @@ impl App {
         self.cell_width = renderer.cell_width();
         self.cell_height = renderer.cell_height();
         self.renderer = renderer;
-        self.resize_to_window();
+        self.resize_to_window(false);
         self.x11.set_size_hints(
             self.padding,
             self.cell_width,
@@ -1341,7 +1378,7 @@ impl App {
         }
     }
 
-    fn resize_to_window(&mut self) {
+    fn resize_to_window(&mut self, from_configure: bool) {
         let width = self.x11.width().max(1);
         let height = self.x11.height().max(1);
         let base = self.config.window.padding;
@@ -1371,40 +1408,205 @@ impl App {
             / self.cell_height.max(1) as usize;
         let cols = cols.max(1);
         let rows = rows.max(1);
-        if cols != self.terminal.width() || rows != self.terminal.height() {
-            self.terminal
-                .resize(cols, rows, self.cell_width, self.cell_height);
-            self.terminal.set_window_pixels(width, height);
-            self.pty.resize(cols, rows, width as usize, height as usize);
-            self.terminal.mark_all();
-            // Reflowing scrollback is deferred until the drag settles.
+        let grid_changed = cols != self.terminal.width() || rows != self.terminal.height();
+        if grid_changed {
+            let old_cols = self.terminal.width();
+            let old_rows = self.terminal.height();
+            let old_cursor = (self.terminal.cursor.x, self.terminal.cursor.y);
+            if from_configure {
+                // resize_line only pads or truncates cells; it never rewraps.
+                // The visible glyphs are therefore identical before and after
+                // a grid change, so a full redraw would repaint the same
+                // pixels. Erase only the two overlays whose geometry depends
+                // on cols/rows and let the fast path redraw them.
+                let background = pixel(
+                    &self.canvas,
+                    self.terminal.theme().background,
+                    self.x11.background_alpha(),
+                );
+                let mut rects = self.overlay_rects_for(old_cols, old_rows, old_cursor);
+                for &(x, y, w, h) in &rects {
+                    self.canvas
+                        .fill_rect(x as i32, y as i32, w as i32, h as i32, background);
+                }
+                self.terminal
+                    .resize(cols, rows, self.cell_width, self.cell_height);
+                let discarded = self.terminal.take_damage();
+                self.terminal.recycle_damage(discarded);
+                rects.extend(self.overlay_rects_for(
+                    cols,
+                    rows,
+                    (self.terminal.cursor.x, self.terminal.cursor.y),
+                ));
+                self.overlay_rects = rects;
+                self.redraw_overlays = true;
+                // Send SIGWINCH immediately. Deferring it until the drag
+                // settles makes the shell repaint its prompt late, which is
+                // visible as text lagging behind the window frame.
+                self.pty.resize(cols, rows, width as usize, height as usize);
+            } else {
+                self.terminal
+                    .resize(cols, rows, self.cell_width, self.cell_height);
+                self.pty.resize(cols, rows, width as usize, height as usize);
+                self.terminal.mark_all();
+                self.redraw_all = true;
+            }
             self.resize_settle_at = Some(Instant::now() + Duration::from_millis(100));
         } else {
             self.terminal.cell_width = self.cell_width;
             self.terminal.cell_height = self.cell_height;
-            self.terminal.set_window_pixels(width, height);
         }
+        self.terminal.set_window_pixels(width, height);
         if self.canvas.width != width || self.canvas.height != height {
-            self.canvas.resize(width, height);
-            self.canvas.argb = self.x11.is_argb();
-            self.canvas.fill(pixel(
+            let old_width = self.canvas.width;
+            let old_height = self.canvas.height;
+            let old_indicator = self.indicator_rect(old_width, old_height);
+            let background = pixel(
                 &self.canvas,
                 self.terminal.theme().background,
                 self.x11.background_alpha(),
-            ));
-            self.terminal.mark_all();
+            );
+            let fast = from_configure
+                && !self.terminal.has_selection()
+                && self.search.is_none()
+                && self.context_menu.is_none()
+                && self.bell_until.is_none();
+            if fast {
+                // The badge is baked into the buffer; wipe it before rows move.
+                self.canvas.fill_rect(
+                    old_indicator.0 as i32,
+                    old_indicator.1 as i32,
+                    old_indicator.2 as i32,
+                    old_indicator.3 as i32,
+                    background,
+                );
+            }
+            let repacked = self.canvas.ensure_stride(width, background);
+            self.canvas.resize(width, height, background);
+            self.canvas.argb = self.x11.is_argb();
+            if repacked {
+                // The shared segment is recreated when the stride grows, so
+                // repaint and re-upload the whole window on that one frame.
+                self.terminal.mark_all();
+                self.redraw_all = true;
+            }
+            if fast && !repacked {
+                let mut rects = vec![old_indicator, self.indicator_rect(width, height)];
+                if width > old_width {
+                    rects.push((old_width, 0, width - old_width, height));
+                }
+                if height > old_height {
+                    rects.push((0, old_height, width, height - old_height));
+                }
+                rects.extend(std::mem::take(&mut self.overlay_rects));
+                self.fast_resize = true;
+                self.resize_present_rects = Some(rects);
+            } else {
+                self.overlay_rects.clear();
+                self.terminal.mark_all();
+                self.resize_present_rects = None;
+            }
         }
         if self.search.is_some() {
             self.refresh_active_search();
             self.terminal.reveal_search();
             self.search_stale = false;
         }
-        self.redraw_all = true;
+        if !self.fast_resize {
+            self.overlay_rects.clear();
+            self.redraw_all = true;
+        }
+    }
+
+    fn overlay_rects_for(
+        &self,
+        cols: usize,
+        rows: usize,
+        cursor: (usize, usize),
+    ) -> Vec<(u16, u16, u16, u16)> {
+        let cw = self.cell_width as i32;
+        let ch = self.cell_height as i32;
+        let px = self.padding.x as i32;
+        let py = self.padding.y as i32;
+        let mut rects = Vec::new();
+        if self.terminal.scrollback_len() > 0 {
+            let x = px + cols as i32 * cw + 1;
+            rects.push((
+                x.max(0) as u16,
+                py.max(0) as u16,
+                (scrollbar::width(self.cell_width) as i32 - 1).max(0) as u16,
+                (rows as i32 * ch).max(0) as u16,
+            ));
+        }
+        let (cx, cy) = cursor;
+        rects.push((
+            (px + cx as i32 * cw).max(0) as u16,
+            (py + cy as i32 * ch).max(0) as u16,
+            cw.max(0) as u16,
+            ch.max(0) as u16,
+        ));
+        rects
+    }
+
+    fn indicator_rect(&self, width: u16, height: u16) -> (u16, u16, u16, u16) {
+        let cell_width = self.cell_width as i32;
+        let cell_height = self.cell_height as i32;
+        let text = format!(
+            "{} \u{d7} {}",
+            self.terminal.width(),
+            self.terminal.height()
+        );
+        let w = (text.width() as i32 + 2) * cell_width;
+        let h = cell_height + 8;
+        let margin = (cell_width / 2).max(8);
+        let x = (width as i32 - w - margin).max(0);
+        let y = (height as i32 - h - margin).max(0);
+        (x as u16, y as u16, w as u16, h as u16)
     }
 
     fn draw_overlays(&mut self) {
         self.draw_search_bar();
         self.draw_context_menu();
+        self.draw_resize_indicator();
+    }
+
+    fn draw_resize_indicator(&mut self) {
+        if self.resize_indicator_until.is_none() {
+            return;
+        }
+        let (x, y, width, height) = self.indicator_rect(self.canvas.width, self.canvas.height);
+        let cell_width = self.cell_width as i32;
+        let text = format!(
+            "{} \u{d7} {}",
+            self.terminal.width(),
+            self.terminal.height()
+        );
+        let (fill, foreground) = {
+            let theme = self.terminal.theme();
+            (theme.selection_background, theme.selection_foreground)
+        };
+        let fill = pixel(&self.canvas, fill, 255);
+        self.canvas.fill_rect(
+            x as i32 + 2,
+            y as i32,
+            width as i32 - 4,
+            height as i32,
+            fill,
+        );
+        self.canvas.fill_rect(
+            x as i32,
+            y as i32 + 2,
+            width as i32,
+            height as i32 - 4,
+            fill,
+        );
+        self.renderer.draw_label(
+            &mut self.canvas,
+            &text,
+            x as i32 + cell_width,
+            y as i32 + 4,
+            foreground,
+        );
     }
 
     fn draw_search_bar(&mut self) {
@@ -1523,6 +1725,61 @@ impl App {
             self.refresh_active_search();
         }
         let mut damage = self.terminal.take_damage();
+        let extra_damage = damage.scroll != 0 || damage.rows.iter().any(|row| *row);
+        let fast = self.fast_resize;
+        self.fast_resize = false;
+        let redraw_overlays = self.redraw_overlays;
+        self.redraw_overlays = false;
+        let fast_ok = fast
+            && !self.redraw_all
+            && !extra_damage
+            && damage.is_empty()
+            && self.bell_until.is_none()
+            && self.search.is_none()
+            && self.context_menu.is_none()
+            && !self.terminal.has_selection();
+        if fast_ok {
+            if redraw_overlays {
+                // An empty damage makes Renderer::draw skip its clear and row
+                // loop but still draw the scrollbar and cursor, whose position
+                // depends on the new grid size.
+                let cursor_on = if self.focused {
+                    !self.cursor_blinking() || self.blink_on
+                } else {
+                    true
+                };
+                let (origin_x, origin_y) = self.origin();
+                self.renderer.draw(
+                    &mut self.canvas,
+                    &self.terminal,
+                    &crate::vt::Damage::default(),
+                    origin_x,
+                    origin_y,
+                    cursor_on,
+                    self.focused,
+                    self.x11.background_alpha(),
+                );
+            }
+            self.draw_resize_indicator();
+            match self.resize_present_rects.take() {
+                Some(rects) => self.x11.present_rects(&self.canvas, &rects),
+                None => {
+                    let (_, origin_y) = self.origin();
+                    damage.set_all(self.terminal.height());
+                    self.x11
+                        .present(&self.canvas, &damage, self.cell_height, origin_y);
+                }
+            }
+            self.terminal.recycle_damage(damage);
+            self.rendered_once = true;
+            if self.smoke && self.rendered_once {
+                self.quit = true;
+            }
+            return;
+        }
+        if fast {
+            self.redraw_all = true;
+        }
         if self.redraw_all {
             damage.set_all(self.terminal.height());
             self.redraw_all = false;
@@ -1604,6 +1861,9 @@ impl App {
         }
         if let Some(settle) = self.resize_settle_at {
             deadline(settle);
+        }
+        if let Some(until) = self.resize_indicator_until {
+            deadline(until);
         }
         if let Some(until) = self.bell_until {
             deadline(until);
