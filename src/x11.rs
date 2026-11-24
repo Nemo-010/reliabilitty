@@ -976,6 +976,22 @@ impl X11 {
                 }
             }
         }
+        match crate::trace::present_mode() {
+            "none" => return,
+            "rects" if ok => {
+                let mut all = true;
+                for &(x, y, width, height) in rects {
+                    let (x0, y0, w, h) = Self::clip_rect(canvas, x, y, width, height);
+                    if w > 0 && h > 0 {
+                        all &= self.shm_copy(canvas, x0, y0, w, h);
+                    }
+                }
+                if all {
+                    return;
+                }
+            }
+            _ => {}
+        }
         // A resize discards the window's X pixmap even on a composited
         // desktop, so re-upload the whole window from the shared segment.
         if ok && self.shm_copy(canvas, 0, 0, canvas.width as usize, canvas.height as usize) {

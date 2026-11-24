@@ -23,3 +23,10 @@ pub fn sync_mode() -> &'static str {
     MODE.get_or_init(|| std::env::var("RTTY_SYNC").unwrap_or_default())
         .as_str()
 }
+
+/// Present experiment selected by `RTTY_PRESENT`: `rects`, `none`, or unset.
+pub fn present_mode() -> &'static str {
+    static MODE: OnceLock<String> = OnceLock::new();
+    MODE.get_or_init(|| std::env::var("RTTY_PRESENT").unwrap_or_default())
+        .as_str()
+}
