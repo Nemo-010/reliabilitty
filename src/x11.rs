@@ -1133,6 +1133,7 @@ impl X11 {
         let Some(serial) = self.sync_serial.take() else {
             return;
         };
+        crate::trace::log(format_args!("ack serial_lo={}", serial.lo));
         self.sync_pending_at = None;
         let Some((basic, extended)) = self.sync_counters else {
             return;
@@ -1176,6 +1177,10 @@ impl X11 {
                 && configure.window == self.window
             {
                 self.set_size(configure.width, configure.height);
+                crate::trace::log(format_args!(
+                    "configure {}x{}",
+                    configure.width, configure.height
+                ));
                 configured = true;
                 push_resize(
                     &mut events,
@@ -1243,6 +1248,10 @@ impl X11 {
                 });
             }
             Event::Expose(event) => {
+                crate::trace::log(format_args!(
+                    "expose {}x{}+{}+{} count={}",
+                    event.width, event.height, event.x, event.y, event.count
+                ));
                 if event.window == self.window && event.count == 0 {
                     output.push(UiEvent::Expose);
                 }
@@ -1291,6 +1300,10 @@ impl X11 {
                             lo: data[2],
                         }));
                         self.sync_extended = data[4] != 0;
+                        crate::trace::log(format_args!(
+                            "sync-request serial_lo={} extended={}",
+                            data[2], data[4]
+                        ));
                         self.sync_pending_at = Some(now);
                         self.sync_configured = false;
                     }

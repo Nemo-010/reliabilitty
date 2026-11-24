@@ -11,6 +11,7 @@ mod scale;
 mod scrollbar;
 mod signals;
 mod theme;
+mod trace;
 mod vt;
 mod x11;
 

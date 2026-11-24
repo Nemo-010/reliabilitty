@@ -472,7 +472,16 @@ impl App {
                 || self.x11.sync_pending()
             {
                 self.cursor_damage();
+                let traced = crate::trace::enabled().then(Instant::now);
                 self.render(now);
+                if let Some(start) = traced {
+                    crate::trace::log(format_args!(
+                        "render done in {}us resized={} fast_ok={}",
+                        start.elapsed().as_micros(),
+                        resized,
+                        self.fast_resize_allowed()
+                    ));
+                }
                 self.next_frame = now + self.frame_interval;
                 self.x11.acknowledge_sync();
             }
