@@ -497,7 +497,7 @@ impl X11 {
             )
             .map_err(|error| error.to_string())?;
         let mut protocols = vec![atoms.WM_DELETE_WINDOW];
-        if sync_counters.is_some() {
+        if sync_counters.is_some() && crate::trace::sync_mode() != "off" {
             protocols.push(atoms._NET_WM_SYNC_REQUEST);
         }
         connection
@@ -1147,7 +1147,19 @@ impl X11 {
             // waiting for its sync delay. Jumping straight to the requested
             // value is read as a paced frame and held back.
             let (begin, end) = extended_sync_values(serial);
-            for value in [begin, end] {
+            let values: Vec<sync::Int64> = match crate::trace::sync_mode() {
+                "jump" => vec![serial],
+                "gtk" => {
+                    // begin was set when the request arrived; end is begin + 3
+                    let mut end = begin;
+                    let total = ((end.hi as i64) << 32 | end.lo as i64) + 3;
+                    end.hi = (total >> 32) as i32;
+                    end.lo = total as u32;
+                    vec![end]
+                }
+                _ => vec![begin, end],
+            };
+            for value in values {
                 sent &= sync::set_counter(&self.connection, extended, value).is_ok();
             }
         } else {
@@ -1300,6 +1312,18 @@ impl X11 {
                             lo: data[2],
                         }));
                         self.sync_extended = data[4] != 0;
+                        if self.sync_extended
+                            && crate::trace::sync_mode() == "gtk"
+                            && let Some((_, extended)) = self.sync_counters
+                        {
+                            let request = normalize_sync_serial(sync::Int64 {
+                                hi: data[3] as i32,
+                                lo: data[2],
+                            });
+                            let (begin, _) = extended_sync_values(request);
+                            let _ = sync::set_counter(&self.connection, extended, begin);
+                            let _ = self.connection.flush();
+                        }
                         crate::trace::log(format_args!(
                             "sync-request serial_lo={} extended={}",
                             data[2], data[4]

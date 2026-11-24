@@ -16,3 +16,10 @@ pub fn log(message: std::fmt::Arguments) {
         eprintln!("TR {:>10}us {message}", start.elapsed().as_micros());
     }
 }
+
+/// Sync experiment selected by `RTTY_SYNC`: `off`, `gtk`, `jump`, or unset.
+pub fn sync_mode() -> &'static str {
+    static MODE: OnceLock<String> = OnceLock::new();
+    MODE.get_or_init(|| std::env::var("RTTY_SYNC").unwrap_or_default())
+        .as_str()
+}
