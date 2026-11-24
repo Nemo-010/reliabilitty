@@ -1900,6 +1900,9 @@ impl App {
         if let Some(settle) = self.resize_settle_at {
             deadline(settle);
         }
+        if let Some(sync) = self.x11.sync_deadline() {
+            deadline(sync);
+        }
         if let Some(until) = self.resize_indicator_until {
             deadline(until);
         }
