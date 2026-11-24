@@ -447,6 +447,7 @@ impl X11 {
             .ok()
             .flatten()
             .is_some()
+            && crate::trace::sync_mode() != "off"
         {
             let basic = connection
                 .generate_id()
